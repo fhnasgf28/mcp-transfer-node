@@ -6,8 +6,8 @@
   <meta name="color-scheme" content="light">
   <title>{{ task.task_key }} · Standalone PMT</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH" crossorigin="anonymous">
-  <link href="/static/pmt.css?v=20260712-gdocs-reader2" rel="stylesheet">
-  <link href="/static/pmt-mobile.css?v=20260712-gdocs-reader2" rel="stylesheet">
+  <link href="/static/pmt.css?v=20260713-header1" rel="stylesheet">
+  <link href="/static/pmt-mobile.css?v=20260713-header1" rel="stylesheet">
 </head>
 <body class="pmt-body">
   {% set status_colors = {
@@ -23,13 +23,9 @@
         <span class="pmt-brand-mark">P</span>
         <span><span class="d-block fw-bold lh-1">Standalone PMT</span><small class="pmt-muted fw-normal">Task workspace</small></span>
       </a>
-      <div class="d-flex align-items-center gap-2">
-        <div class="pmt-primary-nav d-none d-lg-flex align-items-center gap-1 me-2">
-          <a class="btn btn-sm pmt-btn-primary" href="/pmt" aria-current="page">Tasks</a>
-          <a class="btn btn-sm btn-light border rounded-3" href="/pmt/agents">Agents</a>
-          <a class="btn btn-sm btn-light border rounded-3" href="/pmt/sync">Sync</a>
-          <a class="btn btn-sm btn-light border rounded-3" href="/pmt/approvals">Approvals</a>
-        </div>
+      <div class="pmt-navbar-actions pmt-task-detail-actions d-flex align-items-center">
+        {% set pmt_nav_active = 'home' %}
+        {% include "_pmt_primary_nav.html" %}
         {% if task.claimed_by or task.current_run_id or task.status == 'claimed' or task.status == 'in_progress' %}
         <button class="btn btn-outline-danger fw-semibold" type="button" disabled title="Task sedang dikerjakan agent">Hapus task</button>
         {% else %}
@@ -217,7 +213,7 @@
                 <summary>Detail teknis</summary>
                 <dl class="pmt-doc-technical-grid">
                   <div><dt>Document ID</dt><dd><code>{{ document.external_id }}</code></dd></div>
-                  <div><dt>Revision ID</dt><dd><code>{{ document.revision_id }}</code></dd></div>
+                  <div><dt>Revision ID</dt><dd><code>{{ document.revision_id or 'Not provided (read-only)' }}</code></dd></div>
                   <div><dt>Selected tab ID</dt><dd><code>{{ document.selected_tab_id }}</code></dd></div>
                   <div><dt>Snapshot</dt><dd>{{ document.tab_count }} tabs &middot; {{ document.char_count }} chars</dd></div>
                   <div><dt>Fetched</dt><dd data-datetime="{{ document.fetched_at }}">{{ document.fetched_at }}</dd></div>

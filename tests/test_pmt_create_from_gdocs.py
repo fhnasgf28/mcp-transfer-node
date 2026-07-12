@@ -11,57 +11,59 @@ from mcp_transfer_node.pmt_gdocs import parse_google_doc_payload
 from mcp_transfer_node.pmt_mcp_server import pmt_create_task_from_google_doc
 from mcp_transfer_node.pmt_store import PmtStore, TaskInput, derive_google_doc_task_title
 
-DOC_URL = "https://docs.google.com/document/d/doc123/edit?tab=tab.main"
+DOC_URL = "https://docs.google.com/document/d/doc123/edit?tab=tab.main&usp=sharing&tab=tab.main"
 
 
-def _snapshot(text: str = "Requirement <script>alert(1)</script>") -> dict[str, object]:
-    return parse_google_doc_payload(
-        {
-            "documentId": "doc123",
-            "title": "People <Roadmap>",
-            "revisionId": "r1",
-            "tabs": [
-                {
-                    "tabProperties": {"tabId": "tab.main", "title": "Main"},
-                    "documentTab": {
-                        "body": {
-                            "content": [
-                                {
-                                    "paragraph": {
-                                        "elements": [{"textRun": {"content": text + "\n"}}],
-                                        "paragraphStyle": {"namedStyleType": "NORMAL_TEXT"},
-                                    }
+def _snapshot(
+    text: str = "Requirement <script>alert(1)</script>", *, revision: bool = True
+) -> dict[str, object]:
+    payload = {
+        "documentId": "doc123",
+        "title": "People <Roadmap>",
+        "revisionId": "r1",
+        "tabs": [
+            {
+                "tabProperties": {"tabId": "tab.main", "title": "Main"},
+                "documentTab": {
+                    "body": {
+                        "content": [
+                            {
+                                "paragraph": {
+                                    "elements": [{"textRun": {"content": text + "\n"}}],
+                                    "paragraphStyle": {"namedStyleType": "NORMAL_TEXT"},
                                 }
-                            ]
-                        }
-                    },
-                    "childTabs": [
-                        {
-                            "tabProperties": {
-                                "tabId": "tab.child",
-                                "title": "Details",
-                                "parentTabId": "tab.main",
-                            },
-                            "documentTab": {
-                                "body": {
-                                    "content": [
-                                        {
-                                            "paragraph": {
-                                                "elements": [{"textRun": {"content": "Child\n"}}],
-                                                "paragraphStyle": {"namedStyleType": "NORMAL_TEXT"},
-                                            }
+                            }
+                        ]
+                    }
+                },
+                "childTabs": [
+                    {
+                        "tabProperties": {
+                            "tabId": "tab.child",
+                            "title": "Details",
+                            "parentTabId": "tab.main",
+                        },
+                        "documentTab": {
+                            "body": {
+                                "content": [
+                                    {
+                                        "paragraph": {
+                                            "elements": [{"textRun": {"content": "Child\n"}}],
+                                            "paragraphStyle": {"namedStyleType": "NORMAL_TEXT"},
                                         }
-                                    ]
-                                }
-                            },
-                            "childTabs": [],
-                        }
-                    ],
-                }
-            ],
-        },
-        selected_tab_id="tab.main",
-    )
+                                    }
+                                ]
+                            }
+                        },
+                        "childTabs": [],
+                    }
+                ],
+            }
+        ],
+    }
+    if not revision:
+        payload.pop("revisionId")
+    return parse_google_doc_payload(payload, selected_tab_id="tab.main")
 
 
 def _csrf_from(response) -> str:
@@ -189,7 +191,7 @@ def test_concurrent_same_google_doc_idempotency_creates_one_task(settings) -> No
 
 
 def test_web_preview_confirm_and_replay_are_safe(client, settings, monkeypatch) -> None:
-    snapshots = iter([_snapshot(), _snapshot()])
+    snapshots = iter([_snapshot(revision=False), _snapshot(revision=False)])
 
     async def fake_fetch(self, _source_url):
         return next(snapshots)

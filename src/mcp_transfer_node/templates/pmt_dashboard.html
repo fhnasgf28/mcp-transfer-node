@@ -6,8 +6,8 @@
   <meta name="color-scheme" content="light">
   <title>Task Dashboard · Standalone PMT</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH" crossorigin="anonymous">
-  <link href="/static/pmt.css?v=20260713-kanban2" rel="stylesheet">
-  <link href="/static/pmt-mobile.css?v=20260713-task-dropup1" rel="stylesheet">
+  <link href="/static/pmt.css?v=20260713-header1" rel="stylesheet">
+  <link href="/static/pmt-mobile.css?v=20260713-header1" rel="stylesheet">
 </head>
 <body class="pmt-body pmt-tasks-page">
   <nav class="navbar pmt-navbar sticky-top py-3">
@@ -19,20 +19,17 @@
           <small class="pmt-muted fw-normal">{{ settings.server_name }}</small>
         </span>
       </a>
-      <div class="d-flex align-items-center gap-2">
-        <div class="pmt-primary-nav d-none d-lg-flex align-items-center gap-1 me-2">
-          <a class="btn btn-sm pmt-btn-primary" href="/pmt" aria-current="page">Tasks</a>
-          <a class="btn btn-sm btn-light border rounded-3" href="/pmt/agents">Agents</a>
-          <a class="btn btn-sm btn-light border rounded-3" href="/pmt/sync">Sync</a>
-          <a class="btn btn-sm btn-light border rounded-3" href="/pmt/approvals">Approvals</a>
-        </div>
-        <span class="d-none d-md-inline-flex align-items-center gap-2 small pmt-muted me-2">
-          <span class="rounded-circle bg-success" style="width:.5rem;height:.5rem"></span>
+      <div class="pmt-navbar-actions d-flex align-items-center">
+        {% set pmt_nav_active = 'home' %}
+        {% include "_pmt_primary_nav.html" %}
+        <span class="pmt-agent-status d-none d-xl-inline-flex">
+          <span class="pmt-agent-status-dot"></span>
           {{ online_agents }} agent aktif
         </span>
         <div class="dropdown pmt-create-task-button">
           <button class="btn pmt-btn-primary dropdown-toggle fw-semibold px-3" type="button" data-bs-toggle="dropdown" aria-expanded="false">
-            Task baru
+            <svg class="pmt-header-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>
+            <span>Task baru</span>
           </button>
           <ul class="dropdown-menu dropdown-menu-end shadow-sm">
             <li>
@@ -42,7 +39,9 @@
           </ul>
         </div>
         <div class="dropdown">
-          <button class="btn btn-light border rounded-3 px-3" data-bs-toggle="dropdown" type="button" aria-expanded="false">•••</button>
+          <button class="btn btn-light border rounded-3 pmt-header-more" data-bs-toggle="dropdown" type="button" aria-expanded="false" aria-label="Menu lainnya">
+            <svg class="pmt-header-icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.7"></circle><circle cx="12" cy="12" r="1.7"></circle><circle cx="19" cy="12" r="1.7"></circle></svg>
+          </button>
           <ul class="dropdown-menu dropdown-menu-end shadow-sm">
             <li><a class="dropdown-item" href="/transfer">Transfer Node</a></li>
             <li><span class="dropdown-item-text small text-secondary">API: /api/v1/pmt</span></li>
@@ -57,13 +56,16 @@
   </nav>
 
   <main class="container-fluid px-3 px-lg-4 py-4">
-    <header class="d-flex flex-column flex-lg-row align-items-lg-end justify-content-between gap-3 mb-4">
+    <header class="pmt-page-header d-flex flex-column flex-lg-row align-items-lg-end justify-content-between gap-3 mb-4">
       <div>
         <span class="pmt-eyebrow">HMX Work Orchestration</span>
         <h1 class="pmt-page-title display-6 mt-1 mb-2">Task Dashboard</h1>
         <p class="pmt-muted mb-0">Pantau task, ownership agent, dan progress development dalam satu workspace.</p>
       </div>
-      <div class="small pmt-muted">Data tersimpan di PMT pusat · Refresh halaman untuk data terbaru</div>
+      <div class="pmt-page-header-note">
+        <svg class="pmt-header-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 11a8.1 8.1 0 0 0-15.5-2M4 5v4h4"></path><path d="M4 13a8.1 8.1 0 0 0 15.5 2M20 19v-4h-4"></path></svg>
+        <span>Data tersimpan di PMT pusat · Refresh halaman untuk data terbaru</span>
+      </div>
     </header>
 
     <section class="row g-3 mb-4" aria-label="Ringkasan task">

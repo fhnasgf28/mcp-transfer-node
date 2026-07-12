@@ -6,8 +6,8 @@
   <meta name="color-scheme" content="light">
   <title>Agent Control Center · Standalone PMT</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH" crossorigin="anonymous">
-  <link href="/static/pmt.css?v=20260712-gdocs-reader2" rel="stylesheet">
-  <link href="/static/pmt-mobile.css?v=20260712-gdocs-reader2" rel="stylesheet">
+  <link href="/static/pmt.css?v=20260713-header1" rel="stylesheet">
+  <link href="/static/pmt-mobile.css?v=20260713-header1" rel="stylesheet">
 </head>
 <body class="pmt-body">
   <nav class="navbar pmt-navbar sticky-top py-3">
@@ -16,17 +16,13 @@
         <span class="pmt-brand-mark">P</span>
         <span><span class="d-block fw-bold lh-1">Standalone PMT</span><small class="pmt-muted fw-normal">Agent Control Center</small></span>
       </a>
-      <div class="pmt-primary-nav d-flex align-items-center gap-2">
-        <a class="btn btn-sm btn-light border rounded-3" href="/pmt">Tasks</a>
-        <a class="btn btn-sm pmt-btn-primary" href="/pmt/agents" aria-current="page">Agents</a>
-        <a class="btn btn-sm btn-light border rounded-3 d-none d-sm-inline-block" href="/pmt/sync">Sync</a>
-        <a class="btn btn-sm btn-light border rounded-3" href="/pmt/approvals">Approvals</a>
-      </div>
+      {% set pmt_nav_active = 'agents' %}
+      {% include "_pmt_primary_nav.html" %}
     </div>
   </nav>
 
   <main class="container-fluid px-3 px-lg-4 py-4">
-    <header class="d-flex flex-column flex-lg-row align-items-lg-end justify-content-between gap-3 mb-4">
+    <header class="pmt-page-header d-flex flex-column flex-lg-row align-items-lg-end justify-content-between gap-3 mb-4">
       <div>
         <span class="pmt-eyebrow">Safe multi-agent orchestration</span>
         <h1 class="pmt-page-title display-6 mt-1 mb-2">Agent Control Center</h1>

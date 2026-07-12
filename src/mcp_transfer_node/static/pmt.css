@@ -38,6 +38,58 @@ body.pmt-body {
   box-shadow: 0 8px 20px rgba(79, 70, 229, 0.28);
 }
 
+.pmt-primary-nav {
+  display: flex;
+  gap: 0.25rem;
+  align-items: center;
+  padding: 0.3rem;
+  background: #f3f5fa;
+  border: 1px solid var(--pmt-border);
+  border-radius: 0.9rem;
+}
+
+.pmt-primary-nav .pmt-nav-link {
+  display: inline-flex;
+  gap: 0.45rem;
+  min-height: 2.5rem;
+  padding: 0.55rem 0.75rem;
+  align-items: center;
+  justify-content: center;
+  color: #5f6c82;
+  font-size: 0.78rem;
+  font-weight: 750;
+  line-height: 1;
+  background: transparent;
+  border: 0;
+  border-radius: 0.65rem;
+  box-shadow: none;
+  transition: color 160ms ease, background-color 160ms ease, box-shadow 160ms ease;
+}
+
+.pmt-primary-nav .pmt-nav-link:not(.pmt-btn-primary):hover,
+.pmt-primary-nav .pmt-nav-link:not(.pmt-btn-primary):focus {
+  color: var(--pmt-primary-dark);
+  background: #fff;
+  box-shadow: 0 2px 8px rgba(26, 36, 58, 0.08);
+}
+
+.pmt-primary-nav .pmt-nav-link.pmt-btn-primary {
+  color: #fff;
+  background: linear-gradient(135deg, #6366f1, #4338ca);
+  box-shadow: 0 6px 14px rgba(79, 70, 229, 0.22);
+}
+
+.pmt-nav-icon {
+  width: 1.05rem;
+  height: 1.05rem;
+  flex: 0 0 auto;
+}
+
+.pmt-primary-nav .pmt-nav-link:focus-visible {
+  outline: 3px solid rgba(99, 102, 241, 0.2);
+  outline-offset: 2px;
+}
+
 .pmt-eyebrow {
   color: var(--pmt-primary);
   font-size: 0.72rem;
@@ -984,4 +1036,143 @@ body.pmt-body {
   text-align: center;
   background: #f8fafc;
   border-radius: 0.7rem;
+}
+
+/* Refined application header */
+.pmt-navbar {
+  min-height: 4.5rem;
+  padding: 0.7rem 0 !important;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 1px 2px rgba(23, 32, 51, 0.04), 0 10px 28px rgba(23, 32, 51, 0.06);
+}
+
+.pmt-navbar .container-fluid {
+  gap: 1rem;
+}
+
+.pmt-navbar .navbar-brand {
+  gap: 0.75rem !important;
+  padding: 0;
+  color: var(--pmt-text);
+}
+
+.pmt-navbar .navbar-brand:hover,
+.pmt-navbar .navbar-brand:focus {
+  color: var(--pmt-primary-dark);
+}
+
+.pmt-navbar .navbar-brand > span:last-child {
+  display: grid;
+  gap: 0.22rem;
+}
+
+.pmt-navbar .navbar-brand > span:last-child > span {
+  font-size: 0.92rem;
+  font-weight: 760 !important;
+  line-height: 1.1 !important;
+  letter-spacing: 0;
+}
+
+.pmt-navbar .navbar-brand small {
+  font-size: 0.69rem;
+  line-height: 1.1;
+  letter-spacing: 0.01em;
+}
+
+.pmt-navbar .pmt-brand-mark {
+  position: relative;
+  width: 2.35rem;
+  height: 2.35rem;
+  flex: 0 0 auto;
+  font-size: 0.88rem;
+  background: linear-gradient(145deg, #6366f1, #4338ca);
+  border: 1px solid rgba(255, 255, 255, 0.45);
+  border-radius: 0.75rem;
+  box-shadow: 0 6px 16px rgba(79, 70, 229, 0.22);
+}
+
+.pmt-navbar-actions {
+  gap: 0.55rem !important;
+}
+
+.pmt-agent-status {
+  display: inline-flex;
+  gap: 0.45rem;
+  min-height: 2.5rem;
+  padding: 0.5rem 0.7rem;
+  align-items: center;
+  color: #526078;
+  font-size: 0.72rem;
+  font-weight: 700;
+  background: #f8fafc;
+  border: 1px solid var(--pmt-border);
+  border-radius: 0.7rem;
+}
+
+.pmt-agent-status-dot {
+  width: 0.48rem;
+  height: 0.48rem;
+  background: #10b981;
+  border-radius: 50%;
+  box-shadow: 0 0 0 0.2rem rgba(16, 185, 129, 0.12);
+}
+
+.pmt-navbar .pmt-create-task-button > .btn {
+  display: inline-flex;
+  gap: 0.45rem;
+  min-height: 2.5rem;
+  align-items: center;
+}
+
+.pmt-navbar .pmt-header-more {
+  display: inline-flex;
+  width: 2.5rem;
+  min-height: 2.5rem;
+  padding: 0;
+  align-items: center;
+  justify-content: center;
+  color: #5f6c82;
+  background: #fff;
+  border-color: var(--pmt-border) !important;
+  box-shadow: 0 2px 8px rgba(26, 36, 58, 0.05);
+}
+
+.pmt-navbar .pmt-header-more:hover,
+.pmt-navbar .pmt-header-more:focus {
+  color: var(--pmt-primary-dark);
+  background: #f8fafc;
+}
+
+.pmt-header-icon {
+  width: 1rem;
+  height: 1rem;
+  flex: 0 0 auto;
+}
+
+.pmt-page-header {
+  position: relative;
+  min-height: 6rem;
+  padding: 0.35rem 0 0.75rem;
+}
+
+.pmt-page-header .pmt-page-title {
+  margin-top: 0.35rem !important;
+  font-size: 2rem;
+  line-height: 1.15;
+  letter-spacing: 0;
+}
+
+.pmt-page-header-note {
+  display: inline-flex;
+  gap: 0.55rem;
+  max-width: 25rem;
+  padding: 0.65rem 0.8rem;
+  align-items: center;
+  color: #647187;
+  font-size: 0.74rem;
+  line-height: 1.35;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid var(--pmt-border);
+  border-radius: 0.75rem;
+  box-shadow: 0 4px 14px rgba(26, 36, 58, 0.04);
 }

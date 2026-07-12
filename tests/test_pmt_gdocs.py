@@ -72,6 +72,9 @@ def document_payload(*tabs: dict[str, Any], document_id: str = "doc_123") -> dic
     [
         ("https://docs.google.com/document/d/abc_123-XYZ", "abc_123-XYZ", None),
         ("https://docs.google.com/document/d/abc/edit?tab=t.0", "abc", "t.0"),
+        ("https://docs.google.com/document/d/abc/edit?tab=t.0&usp=sharing", "abc", "t.0"),
+        ("https://docs.google.com/document/d/abc/edit?tab=t.0&tab=t.0", "abc", "t.0"),
+        ("https://docs.google.com/document/d/abc/edit?usp=sharing", "abc", None),
         ("https://docs.google.com/document/d/abc/view/", "abc", None),
     ],
 )
@@ -95,7 +98,6 @@ def test_parse_google_doc_url_accepts_only_canonical_links(url, document_id, sel
         "https://docs.google.com/document/d/abc/../../private",
         "https://docs.google.com/document/d/abc?tab=",
         "https://docs.google.com/document/d/abc?tab=t.0&tab=t.1",
-        "https://docs.google.com/document/d/abc?usp=sharing",
         "https://docs.google.com/document/d/abc#heading=h.x",
         "https://docs.google.com/document/d/" + "a" * 201,
         "https://docs.google.com/document/d/a%2Fb",
@@ -272,6 +274,24 @@ def test_hash_detects_semantic_structure_but_ignores_provider_revision():
     )
     assert parse_google_doc_payload(renamed_tab)["content_sha256"] != initial["content_sha256"]
     assert parse_google_doc_payload(changed_link)["content_sha256"] != initial["content_sha256"]
+
+
+def test_parser_allows_missing_revision_for_read_only_documents():
+    payload = document_payload(tab("root", "Root", [paragraph("Read only")]))
+    payload.pop("revisionId")
+
+    snapshot = parse_google_doc_payload(payload)
+
+    assert snapshot["revision_id"] == ""
+    assert snapshot["content_sha256"]
+
+
+def test_parser_rejects_non_string_revision_when_present():
+    payload = document_payload(tab("root", "Root", []))
+    payload["revisionId"] = 123
+
+    with pytest.raises(GoogleDocsError, match="revisionId must be a string"):
+        parse_google_doc_payload(payload)
 
 
 def test_default_selected_tab_is_first_depth_first_tab():

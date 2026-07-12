@@ -53,7 +53,8 @@ def parse_google_doc_url(url: str) -> GoogleDocLink:
     """Validate a Google Docs document link and return its bounded identifiers.
 
     Only canonical HTTPS ``docs.google.com/document/d/...`` links are accepted.
-    The optional query is limited to exactly one non-empty ``tab`` parameter.
+    Sharing metadata is ignored. Repeated ``tab`` parameters are accepted only
+    when every value selects the same non-empty tab.
     """
     if not isinstance(url, str) or not url or len(url) > 2_048:
         raise GoogleDocsError("Google Docs URL is invalid")
@@ -80,15 +81,16 @@ def parse_google_doc_url(url: str) -> GoogleDocLink:
             parsed.query,
             keep_blank_values=True,
             strict_parsing=True,
-            max_num_fields=2,
+            max_num_fields=20,
         )
     except (ValueError, TypeError) as exc:
         raise GoogleDocsError("Google Docs URL query is malformed") from exc
-    if any(key != "tab" for key, _value in query_items) or len(query_items) > 1:
-        raise GoogleDocsError("Google Docs URL may only contain one tab query parameter")
-    selected_tab_id = query_items[0][1] if query_items else None
+    tab_ids = [value for key, value in query_items if key == "tab"]
+    selected_tab_id = tab_ids[0] if tab_ids else None
     if selected_tab_id is not None and _TAB_ID_RE.fullmatch(selected_tab_id) is None:
         raise GoogleDocsError("Google Docs tab ID is invalid")
+    if len(set(tab_ids)) > 1:
+        raise GoogleDocsError("Google Docs URL contains conflicting tab query parameters")
     return GoogleDocLink(match.group("document_id"), selected_tab_id)
 
 
@@ -393,7 +395,12 @@ def parse_google_doc_payload(
             "Google Docs response document ID does not match the requested document"
         )
     title = _string(document.get("title"), "document.title")
-    revision_id = _string(document.get("revisionId"), "document.revisionId", allow_empty=False)
+    revision_value = document.get("revisionId")
+    revision_id = (
+        ""
+        if revision_value is None
+        else _string(revision_value, "document.revisionId", allow_empty=False)
+    )
     root_tabs = _list(document.get("tabs"), "document.tabs")
     if not root_tabs:
         raise GoogleDocsError("Malformed Google Docs payload: document has no tabs")

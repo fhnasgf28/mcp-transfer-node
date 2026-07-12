@@ -1,0 +1,37 @@
+<div class="pmt-primary-nav" role="navigation" aria-label="Navigasi utama PMT">
+  <a class="btn btn-sm pmt-nav-link{% if pmt_nav_active == 'home' %} pmt-btn-primary{% endif %}" href="/pmt"{% if pmt_nav_active == 'home' %} aria-current="page"{% endif %}>
+    <svg class="pmt-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="m3 11 9-8 9 8"></path>
+      <path d="M5 10v10h14V10"></path>
+      <path d="M9 20v-6h6v6"></path>
+    </svg>
+    <span>Home</span>
+  </a>
+  <a class="btn btn-sm pmt-nav-link{% if pmt_nav_active == 'agents' %} pmt-btn-primary{% endif %}" href="/pmt/agents"{% if pmt_nav_active == 'agents' %} aria-current="page"{% endif %}>
+    <svg class="pmt-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"></path>
+      <circle cx="9" cy="7" r="4"></circle>
+      <path d="M22 21v-2a4 4 0 0 0-3-3.87"></path>
+      <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+    </svg>
+    <span>Agents</span>
+  </a>
+  <a class="btn btn-sm pmt-nav-link{% if pmt_nav_active == 'sync' %} pmt-btn-primary{% endif %}" href="/pmt/sync"{% if pmt_nav_active == 'sync' %} aria-current="page"{% endif %}>
+    <svg class="pmt-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M20 7h-6V1"></path>
+      <path d="m20 1-7 7"></path>
+      <path d="M4 17h6v6"></path>
+      <path d="m4 23 7-7"></path>
+      <path d="M5.1 9A7 7 0 0 1 16 4"></path>
+      <path d="M18.9 15A7 7 0 0 1 8 20"></path>
+    </svg>
+    <span>Sync</span>
+  </a>
+  <a class="btn btn-sm pmt-nav-link{% if pmt_nav_active == 'approvals' %} pmt-btn-primary{% endif %}" href="/pmt/approvals"{% if pmt_nav_active == 'approvals' %} aria-current="page"{% endif %}>
+    <svg class="pmt-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10"></path>
+      <path d="m9 12 2 2 4-4"></path>
+    </svg>
+    <span>Approvals</span>
+  </a>
+</div>
