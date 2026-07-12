@@ -62,6 +62,23 @@ async def run_once(worker_id: str) -> dict[str, object]:
             result = await sync_google_sheet(store, schedule["payload"], actor=worker_id)
         elif schedule["job_type"] == "lease_recovery":
             result = maintenance
+        elif schedule["job_type"] == "internal_status_generate":
+            payload = schedule["payload"]
+            report = store.generate_internal_status_report(
+                owner=payload["owner"],
+                report_date=payload.get("report_date"),
+                period=payload["period"],
+                timezone_name=payload.get("timezone", "Asia/Jakarta"),
+                actor=worker_id,
+            )
+            result = {
+                "report_id": report["id"],
+                "owner": report["owner"],
+                "report_date": report["report_date"],
+                "period": report["period"],
+                "report_version": report["report_version"],
+                "state": report["state"],
+            }
         else:
             result = {"reason": f"unsupported job type: {schedule['job_type']}"}
             store.finish_schedule_run(schedule["id"], run_id, worker_id, "skipped", result)
@@ -71,7 +88,7 @@ async def run_once(worker_id: str) -> dict[str, object]:
         store.finish_schedule_run(schedule["id"], run_id, worker_id, "skipped", safe_result)
         return {"status": "skipped", "schedule": schedule["id"], "result": safe_result}
     except Exception as exc:
-        safe_result = {"error_type": type(exc).__name__, "message": "Google Sheet sync failed"}
+        safe_result = {"error_type": type(exc).__name__, "message": "Schedule execution failed"}
         store.finish_schedule_run(schedule["id"], run_id, worker_id, "failed", safe_result)
         return {"status": "failed", "schedule": schedule["id"], "result": safe_result}
 

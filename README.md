@@ -27,7 +27,7 @@ MCP transfer command: `/home/fhnasgf/mcp-transfer-node/.venv/bin/mcp-transfer-mc
 
 ## Standalone PMT MVP
 
-After login, open `/pmt` for tasks, `/pmt/agents` for heartbeat/capability/lease visibility, `/pmt/sync` for read-only Google Sheet scheduler observability, and `/pmt/approvals` for human approval decisions and execution-attempt history. Agent API routes live under `/api/v1/pmt` and use the peer bearer-token registry with `X-PMT-Agent` identity binding.
+After login, open `/pmt` for tasks, `/pmt/agents` for heartbeat/capability/lease visibility, `/pmt/sync` for read-only Google Sheet scheduler observability, `/pmt/internal-status` for versioned PMT-backed report drafts, and `/pmt/approvals` for human approval decisions and execution-attempt history. Agent API routes live under `/api/v1/pmt` and use the peer bearer-token registry with `X-PMT-Agent` identity binding.
 
 Install the remote PMT MCP adapter on each OpenClaw server:
 
@@ -44,7 +44,7 @@ The central schedule worker executes one due job per invocation:
 MCP_PMT_AGENT_ID=pmt-scheduler mcp-pmt-worker
 ```
 
-Executable schedule types are `google_sheet_sync` and `lease_recovery`. Google Sheet sync rejects redirects and non-Google targets, uses source-aware idempotency, defaults to Farhan tasks with `Dev Status = To-Do`, and never writes back.
+Executable schedule types are `google_sheet_sync`, `lease_recovery`, and draft-only `internal_status_generate`. Google Sheet sync rejects redirects and non-Google targets, uses source-aware idempotency, defaults to Farhan tasks with `Dev Status = To-Do`, and never writes back.
 
 External mutations are represented by immutable approval requests for Sheet write-back, Git push/MR, pipeline retry, chat message, or deployment. A named human must approve an agent request before a separately fenced executor can claim it. This release provides the queue, UI, API, MCP contract, leases, idempotency, and audit trail only: it intentionally contains **no connector that performs those external mutations**. Approval-executor peers must also have `approval.execute` or an action-specific scope in `peers.json`.
 
@@ -61,3 +61,4 @@ Hardened user service, worker timer, and backup timer templates are under `deplo
 Full architecture, API examples, multi-server setup, security rules, scheduler guidance, HMX workflow, limitations, and roadmap:
 
 - [`docs/standalone-pmt.md`](docs/standalone-pmt.md)
+- [`docs/internal-status-migration.md`](docs/internal-status-migration.md)

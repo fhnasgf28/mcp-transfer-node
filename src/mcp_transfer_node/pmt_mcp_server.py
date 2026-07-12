@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 import httpx
 from mcp.server.fastmcp import FastMCP
@@ -589,6 +589,102 @@ def pmt_finish_approved_action(
             "status": status,
             "result": result or {},
         },
+    )
+
+
+@mcp.tool()
+def pmt_generate_internal_status_draft(
+    owner: str,
+    period: str,
+    report_date: str = "",
+    timezone: str = "Asia/Jakarta",
+    regenerate: bool = False,
+    expected_version: int = 0,
+) -> dict[str, object]:
+    """Generate or idempotently get a PMT-backed morning/evening internal-status draft."""
+    return _request(
+        "POST",
+        "/internal-status/reports/generate",
+        json_body={
+            "owner": owner,
+            "period": period,
+            "report_date": report_date or None,
+            "timezone": timezone,
+            "regenerate": regenerate,
+            "expected_version": expected_version if expected_version > 0 else None,
+            "overrides": {"include": [], "exclude": []},
+        },
+    )
+
+
+@mcp.tool()
+def pmt_get_internal_status_draft(
+    owner: str, report_date: str, period: str, version: int = 0
+) -> dict[str, object]:
+    """Get one PMT internal-status snapshot, defaulting to the latest version."""
+    params = {"version": version} if version > 0 else None
+    path = "/internal-status/reports/{}/{}/{}".format(
+        quote(owner, safe=""), quote(report_date, safe=""), quote(period, safe="")
+    )
+    return _request("GET", path, params=params)
+
+
+@mcp.tool()
+def pmt_list_internal_status_drafts(owner: str = "", limit: int = 50) -> dict[str, object]:
+    """List compact PMT internal-status snapshot metadata without task/context payloads."""
+    params: dict[str, object] = {"limit": limit}
+    if owner:
+        params["owner"] = owner
+    return _request("GET", "/internal-status/reports", params=params)
+
+
+@mcp.tool()
+def pmt_revise_internal_status_draft(
+    owner: str,
+    report_date: str,
+    period: str,
+    expected_version: int,
+    include: list[dict[str, str]] | None = None,
+    exclude: list[dict[str, str]] | None = None,
+) -> dict[str, object]:
+    """Create a fenced new draft version with bounded task-linked section overrides."""
+    return _request(
+        "POST",
+        "/internal-status/reports/{}/{}/{}/revise".format(
+            quote(owner, safe=""), quote(report_date, safe=""), quote(period, safe="")
+        ),
+        json_body={
+            "expected_version": expected_version,
+            "overrides": {"include": include or [], "exclude": exclude or []},
+        },
+    )
+
+
+@mcp.tool()
+def pmt_approve_internal_status_draft(
+    owner: str, report_date: str, period: str, expected_version: int
+) -> dict[str, object]:
+    """Approve the latest draft with explicit approval scope and version fencing."""
+    return _request(
+        "POST",
+        "/internal-status/reports/{}/{}/{}/approve".format(
+            quote(owner, safe=""), quote(report_date, safe=""), quote(period, safe="")
+        ),
+        json_body={"expected_version": expected_version},
+    )
+
+
+@mcp.tool()
+def pmt_mark_internal_status_sent(
+    owner: str, report_date: str, period: str, expected_version: int
+) -> dict[str, object]:
+    """Idempotently mark an approved snapshot sent; this never calls a chat provider."""
+    return _request(
+        "POST",
+        "/internal-status/reports/{}/{}/{}/mark-sent".format(
+            quote(owner, safe=""), quote(report_date, safe=""), quote(period, safe="")
+        ),
+        json_body={"expected_version": expected_version},
     )
 
 

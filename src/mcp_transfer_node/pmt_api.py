@@ -202,6 +202,36 @@ class ScheduleFinish(BaseModel):
     result: dict[str, Any] = Field(default_factory=dict)
 
 
+class InternalStatusOverride(BaseModel):
+    section: str = Field(min_length=1, max_length=40)
+    task_ref: str = Field(min_length=1, max_length=240)
+    note: str = Field(default="", max_length=500)
+
+
+class InternalStatusOverrides(BaseModel):
+    include: list[InternalStatusOverride] = Field(default_factory=list, max_length=50)
+    exclude: list[InternalStatusOverride] = Field(default_factory=list, max_length=50)
+
+
+class InternalStatusGenerate(BaseModel):
+    owner: str = Field(min_length=1, max_length=120)
+    report_date: str | None = Field(default=None, max_length=10)
+    period: str = Field(min_length=1, max_length=20)
+    timezone: str = Field(default="Asia/Jakarta", min_length=1, max_length=64)
+    regenerate: bool = False
+    expected_version: int | None = Field(default=None, ge=1, le=1_000_000)
+    overrides: InternalStatusOverrides = Field(default_factory=InternalStatusOverrides)
+
+
+class InternalStatusRevise(BaseModel):
+    expected_version: int = Field(ge=1)
+    overrides: InternalStatusOverrides
+
+
+class InternalStatusTransition(BaseModel):
+    expected_version: int = Field(ge=1)
+
+
 class ApprovalRequestCreate(BaseModel):
     action_type: str
     title: str = Field(min_length=1, max_length=300)
@@ -285,6 +315,13 @@ def create_pmt_api_router(
             )
 
     def require_context_scope(peer: AllowedPeer, scope: str) -> None:
+        if scope not in peer.scopes:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=error_response("FORBIDDEN", f"Peer requires explicit {scope} scope"),
+            )
+
+    def require_report_scope(peer: AllowedPeer, scope: str) -> None:
         if scope not in peer.scopes:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -792,12 +829,136 @@ def create_pmt_api_router(
             translate_error(exc)
         return success_response({"approval": approval})
 
+    def report_overrides(payload: InternalStatusOverrides) -> dict[str, list[dict[str, str]]]:
+        return {
+            "include": [item.model_dump() for item in payload.include],
+            "exclude": [
+                {"section": item.section, "task_ref": item.task_ref} for item in payload.exclude
+            ],
+        }
+
+    @router.post("/internal-status/reports/generate")
+    def generate_internal_status_report(
+        payload: InternalStatusGenerate, peer: AllowedPeer = Depends(require_agent)
+    ):
+        require_report_scope(peer, "pmt.report.generate")
+        try:
+            report = store.generate_internal_status_report(
+                owner=payload.owner,
+                report_date=payload.report_date,
+                period=payload.period,
+                timezone_name=payload.timezone,
+                actor=peer.name,
+                regenerate=payload.regenerate,
+                expected_version=payload.expected_version,
+                overrides=report_overrides(payload.overrides),
+            )
+        except (KeyError, PermissionError, ValueError) as exc:
+            translate_error(exc)
+        return success_response({"report": report})
+
+    @router.get("/internal-status/reports")
+    def list_internal_status_reports(
+        owner: str | None = Query(default=None, max_length=120),
+        limit: int = Query(default=50, ge=1, le=200),
+        peer: AllowedPeer = Depends(require_agent),
+    ):
+        require_report_scope(peer, "pmt.report.read")
+        return success_response(
+            {"reports": store.list_internal_status_reports(owner=owner, limit=limit)}
+        )
+
+    @router.get("/internal-status/reports/{owner}/{report_date}/{period}")
+    def get_internal_status_report(
+        owner: str,
+        report_date: str,
+        period: str,
+        version: int | None = Query(default=None, ge=1, le=1_000_000),
+        peer: AllowedPeer = Depends(require_agent),
+    ):
+        require_report_scope(peer, "pmt.report.read")
+        try:
+            report = store.get_internal_status_report(owner, report_date, period, version)
+            if report is None:
+                raise KeyError(f"{owner}:{report_date}:{period}")
+        except (KeyError, ValueError) as exc:
+            translate_error(exc)
+        return success_response({"report": report})
+
+    @router.post("/internal-status/reports/{owner}/{report_date}/{period}/revise")
+    def revise_internal_status_report(
+        owner: str,
+        report_date: str,
+        period: str,
+        payload: InternalStatusRevise,
+        peer: AllowedPeer = Depends(require_agent),
+    ):
+        require_report_scope(peer, "pmt.report.revise")
+        try:
+            report = store.revise_internal_status_report(
+                owner=owner,
+                report_date=report_date,
+                period=period,
+                expected_version=payload.expected_version,
+                overrides=report_overrides(payload.overrides),
+                actor=peer.name,
+            )
+        except (KeyError, PermissionError, ValueError) as exc:
+            translate_error(exc)
+        return success_response({"report": report})
+
+    @router.post("/internal-status/reports/{owner}/{report_date}/{period}/approve")
+    def approve_internal_status_report(
+        owner: str,
+        report_date: str,
+        period: str,
+        payload: InternalStatusTransition,
+        peer: AllowedPeer = Depends(require_agent),
+    ):
+        require_report_scope(peer, "pmt.report.approve")
+        try:
+            report = store.transition_internal_status_report(
+                owner=owner,
+                report_date=report_date,
+                period=period,
+                expected_version=payload.expected_version,
+                target_state="approved",
+                actor=peer.name,
+            )
+        except (KeyError, PermissionError, ValueError) as exc:
+            translate_error(exc)
+        return success_response({"report": report})
+
+    @router.post("/internal-status/reports/{owner}/{report_date}/{period}/mark-sent")
+    def mark_internal_status_report_sent(
+        owner: str,
+        report_date: str,
+        period: str,
+        payload: InternalStatusTransition,
+        peer: AllowedPeer = Depends(require_agent),
+    ):
+        require_report_scope(peer, "pmt.report.send")
+        try:
+            report = store.transition_internal_status_report(
+                owner=owner,
+                report_date=report_date,
+                period=period,
+                expected_version=payload.expected_version,
+                target_state="sent",
+                actor=peer.name,
+            )
+        except (KeyError, PermissionError, ValueError) as exc:
+            translate_error(exc)
+        return success_response({"report": report})
+
     @router.get("/schedules")
     def list_schedules(_: AllowedPeer = Depends(require_agent)):
         return success_response({"schedules": store.list_schedules()})
 
     @router.post("/schedules", status_code=status.HTTP_201_CREATED)
     def create_schedule(payload: ScheduleCreate, peer: AllowedPeer = Depends(require_agent)):
+        if payload.job_type == "internal_status_generate":
+            require_report_scope(peer, "pmt.report.generate")
         try:
             schedule = store.create_schedule(
                 payload.name,

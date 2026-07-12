@@ -27,6 +27,15 @@
     </svg>
     <span>Sync</span>
   </a>
+  <a class="btn btn-sm pmt-nav-link{% if pmt_nav_active == 'internal_status' %} pmt-btn-primary{% endif %}" href="/pmt/internal-status"{% if pmt_nav_active == 'internal_status' %} aria-current="page"{% endif %}>
+    <svg class="pmt-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M4 4h16v16H4z"></path>
+      <path d="M8 9h8"></path>
+      <path d="M8 13h8"></path>
+      <path d="M8 17h5"></path>
+    </svg>
+    <span>Internal Status</span>
+  </a>
   <a class="btn btn-sm pmt-nav-link{% if pmt_nav_active == 'approvals' %} pmt-btn-primary{% endif %}" href="/pmt/approvals"{% if pmt_nav_active == 'approvals' %} aria-current="page"{% endif %}>
     <svg class="pmt-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
       <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10"></path>

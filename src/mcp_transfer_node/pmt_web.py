@@ -4,8 +4,9 @@ import json
 import secrets
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlencode
 
-from fastapi import APIRouter, Form, HTTPException, Request, status
+from fastapi import APIRouter, Form, HTTPException, Query, Request, status
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 
@@ -207,6 +208,215 @@ def create_pmt_web_router(
                 "csrf_token": request.session["csrf_token"],
                 "flash": flash,
             },
+        )
+
+    @router.get("/internal-status", response_class=HTMLResponse)
+    def internal_status_reports(
+        request: Request,
+        owner: str = "",
+        report_date: str = "",
+        period: str = "",
+        report_version: int | None = Query(default=None, ge=1, le=1_000_000),
+    ) -> HTMLResponse:
+        _require_login(request)
+        selected = None
+        error = request.session.pop("pmt_report_error", None)
+        if owner and report_date and period:
+            try:
+                selected = store.get_internal_status_report(
+                    owner, report_date, period, report_version
+                )
+            except ValueError as exc:
+                error = str(exc)
+        return TEMPLATES.TemplateResponse(
+            request,
+            "pmt_internal_status.html",
+            {
+                "settings": settings,
+                "reports": store.list_internal_status_reports(owner=owner or None, limit=100),
+                "selected": selected,
+                "csrf_token": request.session["csrf_token"],
+                "error": error,
+            },
+        )
+
+    @router.post("/internal-status/generate")
+    def generate_internal_status_report_web(
+        request: Request,
+        csrf_token: str = Form(...),
+        owner: str = Form(...),
+        report_date: str = Form(default=""),
+        period: str = Form(...),
+        timezone_name: str = Form(default="Asia/Jakarta"),
+        regenerate: bool = Form(default=False),
+        expected_version: int | None = Form(default=None),
+    ) -> RedirectResponse:
+        _require_login(request)
+        _require_csrf(request, csrf_token)
+        try:
+            report = store.generate_internal_status_report(
+                owner=owner,
+                report_date=report_date or None,
+                period=period,
+                timezone_name=timezone_name,
+                actor=_principal(request),
+                regenerate=regenerate,
+                expected_version=expected_version,
+            )
+        except (KeyError, PermissionError, ValueError) as exc:
+            request.session["pmt_report_error"] = str(exc)
+            return RedirectResponse("/pmt/internal-status", status_code=status.HTTP_303_SEE_OTHER)
+        query = urlencode(
+            {
+                "owner": report["owner"],
+                "report_date": report["report_date"],
+                "period": report["period"],
+                "report_version": report["report_version"],
+            }
+        )
+        return RedirectResponse(
+            f"/pmt/internal-status?{query}", status_code=status.HTTP_303_SEE_OTHER
+        )
+
+    @router.post("/internal-status/revise")
+    def revise_internal_status_report_web(
+        request: Request,
+        csrf_token: str = Form(...),
+        owner: str = Form(...),
+        report_date: str = Form(...),
+        period: str = Form(...),
+        expected_version: int = Form(...),
+        include_section: str = Form(default=""),
+        include_task_ref: str = Form(default=""),
+        include_note: str = Form(default=""),
+        exclude_section: str = Form(default=""),
+        exclude_task_ref: str = Form(default=""),
+    ) -> RedirectResponse:
+        _require_login(request)
+        _require_csrf(request, csrf_token)
+        overrides: dict[str, list[dict[str, str]]] = {"include": [], "exclude": []}
+        try:
+            prior = store.get_internal_status_report(owner, report_date, period, expected_version)
+            if prior is None:
+                raise KeyError(f"{owner}:{report_date}:{period}:{expected_version}")
+            for action in ("include", "exclude"):
+                overrides[action] = [dict(item) for item in prior["overrides"][action]]
+        except (KeyError, ValueError) as exc:
+            request.session["pmt_report_error"] = str(exc)
+            return RedirectResponse("/pmt/internal-status", status_code=status.HTTP_303_SEE_OTHER)
+        if include_section and include_task_ref:
+            addition = {
+                "section": include_section,
+                "task_ref": include_task_ref,
+                "note": include_note,
+            }
+            overrides["include"] = [
+                item
+                for item in overrides["include"]
+                if (item["section"], item["task_ref"]) != (include_section, include_task_ref)
+            ]
+            overrides["include"].append(addition)
+        if exclude_section and exclude_task_ref:
+            overrides["exclude"] = [
+                item
+                for item in overrides["exclude"]
+                if (item["section"], item["task_ref"]) != (exclude_section, exclude_task_ref)
+            ]
+            overrides["exclude"].append({"section": exclude_section, "task_ref": exclude_task_ref})
+        try:
+            store.revise_internal_status_report(
+                owner=owner,
+                report_date=report_date,
+                period=period,
+                expected_version=expected_version,
+                overrides=overrides,
+                actor=_principal(request),
+            )
+        except (KeyError, PermissionError, ValueError) as exc:
+            request.session["pmt_report_error"] = str(exc)
+        query = urlencode(
+            {
+                "owner": owner,
+                "report_date": report_date,
+                "period": period,
+                "report_version": expected_version + 1,
+            }
+        )
+        return RedirectResponse(
+            f"/pmt/internal-status?{query}", status_code=status.HTTP_303_SEE_OTHER
+        )
+
+    def transition_internal_status_report_web(
+        request: Request,
+        *,
+        csrf_token: str,
+        owner: str,
+        report_date: str,
+        period: str,
+        expected_version: int,
+        target_state: str,
+    ) -> RedirectResponse:
+        _require_login(request)
+        _require_csrf(request, csrf_token)
+        try:
+            store.transition_internal_status_report(
+                owner=owner,
+                report_date=report_date,
+                period=period,
+                expected_version=expected_version,
+                target_state=target_state,
+                actor=_principal(request),
+            )
+        except (KeyError, PermissionError, ValueError) as exc:
+            request.session["pmt_report_error"] = str(exc)
+        query = urlencode(
+            {
+                "owner": owner,
+                "report_date": report_date,
+                "period": period,
+                "report_version": expected_version,
+            }
+        )
+        return RedirectResponse(
+            f"/pmt/internal-status?{query}", status_code=status.HTTP_303_SEE_OTHER
+        )
+
+    @router.post("/internal-status/approve")
+    def approve_internal_status_report_web(
+        request: Request,
+        csrf_token: str = Form(...),
+        owner: str = Form(...),
+        report_date: str = Form(...),
+        period: str = Form(...),
+        expected_version: int = Form(...),
+    ) -> RedirectResponse:
+        return transition_internal_status_report_web(
+            request,
+            csrf_token=csrf_token,
+            owner=owner,
+            report_date=report_date,
+            period=period,
+            expected_version=expected_version,
+            target_state="approved",
+        )
+
+    @router.post("/internal-status/mark-sent")
+    def mark_internal_status_report_sent_web(
+        request: Request,
+        csrf_token: str = Form(...),
+        owner: str = Form(...),
+        report_date: str = Form(...),
+        period: str = Form(...),
+        expected_version: int = Form(...),
+    ) -> RedirectResponse:
+        return transition_internal_status_report_web(
+            request,
+            csrf_token=csrf_token,
+            owner=owner,
+            report_date=report_date,
+            period=period,
+            expected_version=expected_version,
+            target_state="sent",
         )
 
     @router.get("/tasks/from-google-doc", response_class=HTMLResponse)

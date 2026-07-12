@@ -14,6 +14,20 @@ from pathlib import Path
 from typing import Any, Iterator
 from urllib.parse import urlparse
 
+from mcp_transfer_node.pmt_reports import (
+    MAX_REPORT_ITEMS_PER_SECTION,
+    MAX_REPORT_ACTOR_LENGTH,
+    MAX_REPORT_OWNER_LENGTH,
+    MAX_REPORT_VERSION,
+    clean_text,
+    local_date,
+    parse_report_date,
+    render_report,
+    utc_date_window,
+    validate_overrides,
+    validate_period,
+)
+
 TASK_STATUSES = {
     "inbox",
     "todo",
@@ -27,7 +41,7 @@ TASK_STATUSES = {
 TASK_PRIORITIES = {"low", "normal", "high", "urgent"}
 EVIDENCE_TYPES = {"commit", "merge_request", "pipeline", "screenshot", "video", "test", "note"}
 AGENT_MODES = {"active", "draining", "disabled"}
-SCHEDULE_JOB_TYPES = {"google_sheet_sync", "lease_recovery"}
+SCHEDULE_JOB_TYPES = {"google_sheet_sync", "lease_recovery", "internal_status_generate"}
 APPROVAL_ACTION_TYPES = {
     "sheet_writeback",
     "git_push",
@@ -211,6 +225,29 @@ class PmtStore:
                 );
                 CREATE INDEX IF NOT EXISTS idx_task_evidence_task
                     ON task_evidence(task_id, created_at);
+                CREATE TABLE IF NOT EXISTS internal_status_reports (
+                    id TEXT PRIMARY KEY,
+                    owner TEXT NOT NULL,
+                    report_date TEXT NOT NULL,
+                    period TEXT NOT NULL CHECK(period IN ('morning','evening')),
+                    report_version INTEGER NOT NULL CHECK(report_version >= 1),
+                    state TEXT NOT NULL DEFAULT 'draft'
+                        CHECK(state IN ('draft','approved','sent')),
+                    timezone TEXT NOT NULL,
+                    generated_at TEXT NOT NULL,
+                    generated_by TEXT NOT NULL DEFAULT '',
+                    rendered_text TEXT NOT NULL,
+                    sections TEXT NOT NULL DEFAULT '{}',
+                    overrides TEXT NOT NULL DEFAULT '{}',
+                    approved_by TEXT,
+                    approved_at TEXT,
+                    sent_by TEXT,
+                    sent_at TEXT,
+                    created_at TEXT NOT NULL,
+                    UNIQUE(owner,report_date,period,report_version)
+                );
+                CREATE INDEX IF NOT EXISTS idx_internal_status_report_latest
+                    ON internal_status_reports(owner,report_date,period,report_version DESC);
                 CREATE TABLE IF NOT EXISTS task_context_documents (
                     id TEXT PRIMARY KEY,
                     task_id TEXT NOT NULL REFERENCES tasks(id),
@@ -428,6 +465,12 @@ class PmtStore:
                 self._ensure_column(db, "agents", "mode", "TEXT NOT NULL DEFAULT 'active'")
                 self._ensure_column(db, "schedules", "current_run_id", "TEXT")
                 self._ensure_column(db, "approval_runs", "provider_key", "TEXT NOT NULL DEFAULT ''")
+                self._ensure_column(
+                    db,
+                    "internal_status_reports",
+                    "generated_by",
+                    "TEXT NOT NULL DEFAULT ''",
+                )
                 self._ensure_column(
                     db, "drive_watch_maintenance", "desired_active", "INTEGER NOT NULL DEFAULT 0"
                 )
@@ -1730,6 +1773,451 @@ class PmtStore:
             ).fetchall()
         return [dict(row) for row in rows]
 
+    @staticmethod
+    def _internal_status_report(row: sqlite3.Row) -> dict[str, Any]:
+        result = dict(row)
+        result["sections"] = json.loads(result["sections"])
+        result["overrides"] = json.loads(result["overrides"])
+        return result
+
+    @staticmethod
+    def _report_owner(value: Any) -> str:
+        owner = clean_text(value, MAX_REPORT_OWNER_LENGTH)
+        if not owner:
+            raise ValueError("owner is required")
+        return owner
+
+    @staticmethod
+    def _report_actor(value: Any) -> str:
+        actor = clean_text(value, MAX_REPORT_ACTOR_LENGTH)
+        if not actor:
+            raise ValueError("report actor identity is required")
+        return actor
+
+    @staticmethod
+    def _report_version(value: int | None) -> int | None:
+        if value is None:
+            return None
+        if isinstance(value, bool) or not 1 <= value <= MAX_REPORT_VERSION:
+            raise ValueError(f"report version must be between 1 and {MAX_REPORT_VERSION}")
+        return value
+
+    @staticmethod
+    def _report_task_item(
+        task: sqlite3.Row,
+        *,
+        source_event_id: int | None = None,
+        source_evidence_id: str | None = None,
+        note: str = "",
+        url: str = "",
+        carry_over: bool = False,
+    ) -> dict[str, Any]:
+        item: dict[str, Any] = {
+            "task_id": task["id"],
+            "task_key": clean_text(task["task_key"], 80),
+            "title": clean_text(task["title"]),
+            "status": task["status"],
+            "source": clean_text(task["source"], 80),
+            "external_id": clean_text(task["external_id"], 240),
+            "carry_over": carry_over,
+        }
+        if source_event_id is not None:
+            item["source_event_id"] = source_event_id
+        if source_evidence_id:
+            item["source_evidence_id"] = source_evidence_id
+        if note:
+            item["note"] = clean_text(note)
+        if url:
+            item["url"] = clean_text(url, 2_000)
+        return item
+
+    def _build_internal_status_sections(
+        self,
+        db: sqlite3.Connection,
+        *,
+        owner: str,
+        report_date: str,
+        period: str,
+        timezone_name: str,
+        overrides: dict[str, list[dict[str, str]]],
+    ) -> dict[str, list[dict[str, Any]]]:
+        parsed_date = parse_report_date(report_date, timezone_name)
+        done_date = parsed_date - timedelta(days=1) if period == "morning" else parsed_date
+        done_start, done_end = utc_date_window(done_date, timezone_name)
+        day_start, day_end = utc_date_window(parsed_date, timezone_name)
+        tasks = db.execute(
+            "SELECT * FROM tasks WHERE lower(assignee)=lower(?) ORDER BY task_key",
+            (owner,),
+        ).fetchall()
+        by_ref: dict[str, sqlite3.Row] = {}
+        for task in tasks:
+            by_ref[task["id"]] = task
+            by_ref[task["task_key"]] = task
+
+        sections: dict[str, list[dict[str, Any]]] = {
+            "done": [],
+            "plan": [],
+            "in_progress": [],
+            "blocker": [],
+            "merge_requests": [],
+        }
+        done_rows = db.execute(
+            """SELECT task_events.id AS event_id,tasks.* FROM task_events
+                JOIN tasks ON tasks.id=task_events.task_id
+                WHERE lower(tasks.assignee)=lower(?) AND task_events.event_type='task.done'
+                  AND task_events.created_at>=? AND task_events.created_at<?
+                ORDER BY tasks.task_key,task_events.id""",
+            (owner, done_start.isoformat(), done_end.isoformat()),
+        ).fetchall()
+        seen_done: set[str] = set()
+        for task in done_rows:
+            if task["id"] in seen_done:
+                continue
+            seen_done.add(task["id"])
+            sections["done"].append(
+                self._report_task_item(task, source_event_id=int(task["event_id"]))
+            )
+
+        if period == "morning":
+            event_rows = db.execute(
+                """SELECT task_events.id AS event_id,task_events.event_type,task_events.payload,
+                           task_events.created_at,tasks.*
+                    FROM task_events JOIN tasks ON tasks.id=task_events.task_id
+                    WHERE lower(tasks.assignee)=lower(?)
+                      AND task_events.created_at>=? AND task_events.created_at<?
+                    ORDER BY tasks.task_key,task_events.id""",
+                (owner, day_start.isoformat(), day_end.isoformat()),
+            ).fetchall()
+            plan_sources: dict[str, int] = {}
+            for event in event_rows:
+                if event["status"] != "todo":
+                    continue
+                if event["event_type"] == "task.created":
+                    plan_sources.setdefault(event["id"], int(event["event_id"]))
+                elif event["event_type"] == "task.updated":
+                    payload = json.loads(event["payload"])
+                    changed = payload.get("changed", {}) if isinstance(payload, dict) else {}
+                    if str(changed.get("assignee", "")).casefold() == owner.casefold():
+                        plan_sources.setdefault(event["id"], int(event["event_id"]))
+            for task in tasks:
+                if task["id"] in plan_sources:
+                    sections["plan"].append(
+                        self._report_task_item(
+                            task, source_event_id=plan_sources[task["id"]], carry_over=False
+                        )
+                    )
+
+        state_event_rows = db.execute(
+            """SELECT max(task_events.id) AS id,task_events.task_id FROM task_events
+                JOIN tasks ON tasks.id=task_events.task_id
+                WHERE lower(tasks.assignee)=lower(?)
+                  AND task_events.event_type IN ('task.claimed','task.in_progress',
+                                                 'task.ready_for_review','task.blocked')
+                GROUP BY task_events.task_id""",
+            (owner,),
+        ).fetchall()
+        state_event_ids: dict[str, int] = {}
+        for event in state_event_rows:
+            if event["task_id"] in by_ref:
+                state_event_ids.setdefault(event["task_id"], int(event["id"]))
+        for task in tasks:
+            if task["status"] in {"claimed", "in_progress", "ready_for_review"}:
+                sections["in_progress"].append(
+                    self._report_task_item(task, source_event_id=state_event_ids.get(task["id"]))
+                )
+            elif task["status"] == "blocked":
+                sections["blocker"].append(
+                    self._report_task_item(
+                        task,
+                        source_event_id=state_event_ids.get(task["id"]),
+                        note=task["blocker"] or task["progress_note"],
+                    )
+                )
+
+        if period == "evening":
+            evidence_rows = db.execute(
+                """SELECT task_evidence.id AS evidence_id,task_evidence.label,
+                           task_evidence.url,task_evidence.note,tasks.*
+                    FROM task_evidence JOIN tasks ON tasks.id=task_evidence.task_id
+                    WHERE lower(tasks.assignee)=lower(?)
+                      AND task_evidence.evidence_type='merge_request'
+                      AND task_evidence.created_at>=? AND task_evidence.created_at<?
+                    ORDER BY tasks.task_key,task_evidence.created_at,task_evidence.id""",
+                (owner, day_start.isoformat(), day_end.isoformat()),
+            ).fetchall()
+            seen_mr: set[tuple[str, str]] = set()
+            for task in evidence_rows:
+                marker = (task["id"], task["url"])
+                if marker in seen_mr:
+                    continue
+                seen_mr.add(marker)
+                sections["merge_requests"].append(
+                    self._report_task_item(
+                        task,
+                        source_evidence_id=task["evidence_id"],
+                        note=task["label"] or task["note"] or task["title"],
+                        url=task["url"],
+                    )
+                )
+            mr_events = db.execute(
+                """SELECT task_events.id AS event_id,task_events.payload,tasks.*
+                    FROM task_events JOIN tasks ON tasks.id=task_events.task_id
+                    WHERE lower(tasks.assignee)=lower(?) AND task_events.event_type='task.updated'
+                      AND task_events.created_at>=? AND task_events.created_at<?
+                    ORDER BY tasks.task_key,task_events.id""",
+                (owner, day_start.isoformat(), day_end.isoformat()),
+            ).fetchall()
+            for task in mr_events:
+                payload = json.loads(task["payload"])
+                changed = payload.get("changed", {}) if isinstance(payload, dict) else {}
+                url = str(changed.get("mr_url", ""))
+                marker = (task["id"], url)
+                if url and marker not in seen_mr:
+                    seen_mr.add(marker)
+                    sections["merge_requests"].append(
+                        self._report_task_item(task, source_event_id=int(task["event_id"]), url=url)
+                    )
+
+        for exclusion in overrides["exclude"]:
+            section = exclusion["section"]
+            task = by_ref.get(exclusion["task_ref"])
+            if task:
+                sections[section] = [
+                    item for item in sections[section] if item["task_id"] != task["id"]
+                ]
+        allowed_sections = {"done", "in_progress", "blocker"}
+        allowed_sections.add("plan" if period == "morning" else "merge_requests")
+        for inclusion in overrides["include"]:
+            section = inclusion["section"]
+            if section not in allowed_sections:
+                raise ValueError(f"section {section} is not available for {period} reports")
+            task = by_ref.get(inclusion["task_ref"])
+            if task is None:
+                raise KeyError(inclusion["task_ref"])
+            existing = next(
+                (item for item in sections[section] if item["task_id"] == task["id"]),
+                None,
+            )
+            if existing is not None:
+                if inclusion.get("note"):
+                    existing["note"] = inclusion["note"]
+                continue
+            sections[section].append(
+                self._report_task_item(
+                    task,
+                    note=inclusion.get("note", ""),
+                    carry_over=section == "plan"
+                    and local_date(task["created_at"], timezone_name) < parsed_date,
+                )
+            )
+        for key in sections:
+            sections[key] = sorted(
+                sections[key], key=lambda item: (item["task_key"], item.get("url", ""))
+            )[:MAX_REPORT_ITEMS_PER_SECTION]
+        return sections
+
+    def generate_internal_status_report(
+        self,
+        *,
+        owner: str,
+        report_date: str | None,
+        period: str,
+        timezone_name: str = "Asia/Jakarta",
+        actor: str,
+        regenerate: bool = False,
+        overrides: dict[str, Any] | None = None,
+        expected_version: int | None = None,
+        require_draft: bool = False,
+    ) -> dict[str, Any]:
+        owner = self._report_owner(owner)
+        actor = self._report_actor(actor)
+        expected_version = self._report_version(expected_version)
+        period = validate_period(period)
+        parsed_date = parse_report_date(report_date, timezone_name)
+        normalized_overrides = validate_overrides(overrides)
+        with self._transaction() as db:
+            latest = db.execute(
+                """SELECT * FROM internal_status_reports
+                    WHERE lower(owner)=lower(?) AND report_date=? AND period=?
+                    ORDER BY report_version DESC LIMIT 1""",
+                (owner, parsed_date.isoformat(), period),
+            ).fetchone()
+            if latest is not None and not regenerate:
+                return self._internal_status_report(latest)
+            if regenerate:
+                if latest is not None and expected_version is None:
+                    raise PermissionError(
+                        "regeneration requires expected_version for the latest report"
+                    )
+                if expected_version is not None and (
+                    latest is None or int(latest["report_version"]) != expected_version
+                ):
+                    raise PermissionError("report changed since it was loaded; refresh and retry")
+            if require_draft and latest is not None and latest["state"] != "draft":
+                raise PermissionError("approved or sent report snapshots are immutable")
+            if latest is not None:
+                owner = latest["owner"]
+            report_version = int(latest["report_version"]) + 1 if latest else 1
+            sections = self._build_internal_status_sections(
+                db,
+                owner=owner,
+                report_date=parsed_date.isoformat(),
+                period=period,
+                timezone_name=timezone_name,
+                overrides=normalized_overrides,
+            )
+            rendered = render_report(owner, parsed_date, period, sections)
+            report_id = f"report_{uuid.uuid4().hex}"
+            now = iso()
+            db.execute(
+                """INSERT INTO internal_status_reports(
+                    id,owner,report_date,period,report_version,state,timezone,generated_at,
+                    generated_by,rendered_text,sections,overrides,created_at
+                ) VALUES(?,?,?,?,?,'draft',?,?,?,?,?,?,?)""",
+                (
+                    report_id,
+                    owner,
+                    parsed_date.isoformat(),
+                    period,
+                    report_version,
+                    timezone_name,
+                    now,
+                    actor,
+                    rendered,
+                    json.dumps(sections, ensure_ascii=False, sort_keys=True),
+                    json.dumps(normalized_overrides, ensure_ascii=False, sort_keys=True),
+                    now,
+                ),
+            )
+            row = db.execute(
+                "SELECT * FROM internal_status_reports WHERE id=?", (report_id,)
+            ).fetchone()
+            return self._internal_status_report(row)
+
+    def get_internal_status_report(
+        self, owner: str, report_date: str, period: str, version: int | None = None
+    ) -> dict[str, Any] | None:
+        owner = self._report_owner(owner)
+        version = self._report_version(version)
+        period = validate_period(period)
+        parsed_date = parse_report_date(report_date, "Asia/Jakarta")
+        with self._connect() as db:
+            if version is None:
+                row = db.execute(
+                    """SELECT * FROM internal_status_reports
+                        WHERE lower(owner)=lower(?) AND report_date=? AND period=?
+                        ORDER BY report_version DESC LIMIT 1""",
+                    (owner, parsed_date.isoformat(), period),
+                ).fetchone()
+            else:
+                row = db.execute(
+                    """SELECT * FROM internal_status_reports
+                        WHERE lower(owner)=lower(?) AND report_date=? AND period=?
+                          AND report_version=?""",
+                    (owner, parsed_date.isoformat(), period, version),
+                ).fetchone()
+        return self._internal_status_report(row) if row else None
+
+    def list_internal_status_reports(
+        self, *, owner: str | None = None, limit: int = 50
+    ) -> list[dict[str, Any]]:
+        values: list[Any] = []
+        clauses = ""
+        if owner is not None:
+            normalized_owner = clean_text(owner, MAX_REPORT_OWNER_LENGTH)
+            if not normalized_owner:
+                return []
+            clauses = "WHERE lower(owner)=lower(?)"
+            values.append(normalized_owner)
+        if isinstance(limit, bool) or not isinstance(limit, int):
+            raise ValueError("limit must be an integer")
+        values.append(max(1, min(limit, 200)))
+        with self._connect() as db:
+            rows = db.execute(
+                f"""SELECT id,owner,report_date,period,report_version,state,timezone,
+                           generated_at,generated_by,approved_by,approved_at,sent_by,sent_at,
+                           created_at
+                    FROM internal_status_reports {clauses}
+                    ORDER BY report_date DESC,period,report_version DESC LIMIT ?""",
+                values,
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def revise_internal_status_report(
+        self,
+        *,
+        owner: str,
+        report_date: str,
+        period: str,
+        expected_version: int,
+        overrides: dict[str, Any],
+        actor: str,
+    ) -> dict[str, Any]:
+        latest = self.get_internal_status_report(owner, report_date, period)
+        if latest is None:
+            raise KeyError(f"{owner}:{report_date}:{period}")
+        return self.generate_internal_status_report(
+            owner=owner,
+            report_date=report_date,
+            period=period,
+            timezone_name=latest["timezone"],
+            actor=actor,
+            regenerate=True,
+            overrides=overrides,
+            expected_version=expected_version,
+            require_draft=True,
+        )
+
+    def transition_internal_status_report(
+        self,
+        *,
+        owner: str,
+        report_date: str,
+        period: str,
+        expected_version: int,
+        target_state: str,
+        actor: str,
+    ) -> dict[str, Any]:
+        if target_state not in {"approved", "sent"}:
+            raise ValueError("invalid report state transition")
+        owner = self._report_owner(owner)
+        actor = self._report_actor(actor)
+        expected_version = self._report_version(expected_version)
+        parsed_date = parse_report_date(report_date, "Asia/Jakarta")
+        with self._transaction() as db:
+            row = db.execute(
+                """SELECT * FROM internal_status_reports
+                    WHERE lower(owner)=lower(?) AND report_date=? AND period=?
+                    ORDER BY report_version DESC LIMIT 1""",
+                (owner, parsed_date.isoformat(), validate_period(period)),
+            ).fetchone()
+            if row is None:
+                raise KeyError(f"{owner}:{report_date}:{period}")
+            if int(row["report_version"]) != expected_version:
+                raise PermissionError("report changed since it was loaded; refresh and retry")
+            if row["state"] == target_state or (row["state"] == "sent" and target_state == "sent"):
+                return self._internal_status_report(row)
+            expected_state = "draft" if target_state == "approved" else "approved"
+            if row["state"] != expected_state:
+                raise PermissionError(f"report must be {expected_state} before {target_state}")
+            now = iso()
+            if target_state == "approved":
+                db.execute(
+                    """UPDATE internal_status_reports SET state='approved',approved_by=?,approved_at=?
+                        WHERE id=? AND state='draft'""",
+                    (actor, now, row["id"]),
+                )
+            else:
+                db.execute(
+                    """UPDATE internal_status_reports SET state='sent',sent_by=?,sent_at=?
+                        WHERE id=? AND state='approved'""",
+                    (actor, now, row["id"]),
+                )
+            updated = db.execute(
+                "SELECT * FROM internal_status_reports WHERE id=?", (row["id"],)
+            ).fetchone()
+            return self._internal_status_report(updated)
+
     def register_agent(
         self, agent_id: str, server_name: str, capabilities: list[str] | None = None
     ) -> dict[str, Any]:
@@ -2666,8 +3154,32 @@ class PmtStore:
     ) -> dict[str, Any]:
         if not name.strip() or not job_type.strip():
             raise ValueError("name and job_type are required")
-        if job_type.strip() not in SCHEDULE_JOB_TYPES:
+        job_type = job_type.strip()
+        if job_type not in SCHEDULE_JOB_TYPES:
             raise ValueError("unsupported schedule job type")
+        if job_type == "internal_status_generate":
+            if not isinstance(payload, dict) or set(payload) - {
+                "owner",
+                "period",
+                "timezone",
+                "report_date",
+            }:
+                raise ValueError("invalid internal status schedule payload")
+            owner = clean_text(payload.get("owner"), 120)
+            if not owner:
+                raise ValueError("internal status schedule owner is required")
+            period = validate_period(str(payload.get("period", "")))
+            timezone_name = clean_text(payload.get("timezone") or "Asia/Jakarta", 64)
+            parsed_date = (
+                parse_report_date(str(payload["report_date"]), timezone_name).isoformat()
+                if payload.get("report_date")
+                else None
+            )
+            payload = {"owner": owner, "period": period, "timezone": timezone_name}
+            if parsed_date:
+                payload["report_date"] = parsed_date
+        else:
+            self._safe_json_object(payload, "schedule payload")
         interval_seconds = max(60, min(interval_seconds, 31 * 24 * 3600))
         schedule_id = f"schedule_{uuid.uuid4().hex}"
         now = utcnow()
@@ -2679,7 +3191,7 @@ class PmtStore:
                 (
                     schedule_id,
                     name.strip(),
-                    job_type.strip(),
+                    job_type,
                     interval_seconds,
                     json.dumps(payload),
                     (now + timedelta(seconds=interval_seconds)).isoformat(),
