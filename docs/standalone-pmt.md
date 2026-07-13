@@ -74,7 +74,12 @@ Example central `peers.json`:
       "name": "openclaw-server-a",
       "tokenHash": "<sha256-token-hash>",
       "enabled": true,
-      "scopes": ["approval.execute:git_push", "pmt.context.read"]
+      "scopes": [
+        "pmt.context.read",
+        "pmt.report.read",
+        "pmt.report.generate",
+        "pmt.report.revise"
+      ]
     },
     {
       "name": "openclaw-server-b",
@@ -96,9 +101,11 @@ Rules:
 
 The REST API prevents identity spoofing: request body `agent_id` must match `X-PMT-Agent` and the bearer-token peer name. Approval execution additionally requires both a registered active-agent capability and a configured peer scope: `approval.execute` or `approval.execute:<action_type>`. An agent cannot self-grant this authority through registration.
 
-Approval execution scopes are enforced now. Broader endpoint-level RBAC and short-lived service tokens remain planned hardening items, so peer credentials should still be granted only to trusted OpenClaw instances.
+Approval execution, Google Docs context, and internal-status report scopes are enforced now. Broader endpoint-level RBAC and short-lived service tokens remain planned hardening items, so peer credentials should still be granted only to trusted OpenClaw instances.
 
 Google Docs context is separately fail-closed. `pmt.context.read` permits snapshot reads; `pmt.context.refresh` permits attach/refresh/remove only when the authenticated agent also owns the active fenced task run. Existing peers without these explicit scopes gain no context authority.
+
+Internal-status reporting is also fail-closed. Report authors normally receive `pmt.report.read`, `pmt.report.generate`, and `pmt.report.revise`. Put `pmt.report.approve` on a separate reviewer peer and `pmt.report.send` on a delivery-recorder peer. Approve/send are intentionally absent from the ordinary author profile and remain separate from `approval.execute*` scopes.
 
 ## Run the central service
 
@@ -184,6 +191,8 @@ Read/context:
 - `pmt_agent_heartbeat`
 - `pmt_get_schedules`
 - `pmt_get_schedule_runs`
+- `pmt_get_internal_status_draft`
+- `pmt_list_internal_status_drafts`
 
 Task writes:
 
@@ -203,6 +212,16 @@ Task writes:
 - `pmt_attach_google_doc_context`
 - `pmt_refresh_google_doc_context`
 - `pmt_remove_google_doc_context`
+
+Internal-status authoring (`pmt.report.generate` / `pmt.report.revise`):
+
+- `pmt_generate_internal_status_draft`
+- `pmt_revise_internal_status_draft`
+
+Privileged internal-status lifecycle:
+
+- `pmt_approve_internal_status_draft` (`pmt.report.approve`)
+- `pmt_mark_internal_status_sent` (`pmt.report.send`; record only, never sends chat)
 
 Schedule writes:
 
@@ -437,7 +456,7 @@ durable Drive event is due.
 
 - SQLite is appropriate for one central PMT process and moderate agent traffic. Move to PostgreSQL before horizontal API scaling.
 - Web login uses one configured named admin principal and password; use OIDC, multiple human identities, and RBAC before multi-user/public deployment.
-- Peer scope enforcement currently protects approval execution only; broader endpoint-level scopes remain future work.
+- Peer scope enforcement protects approval execution, Google Docs context, and internal-status reporting; broader task endpoint scopes remain future work.
 - Schedules are interval-based, not full cron expressions.
 - Sheet identity includes spreadsheet ID, gid, and row number. A stable source UUID column is still recommended before rows are frequently reordered.
 - No attachment upload, GitLab write, Sheet write-back, notification send, pipeline retry, or deployment action is implemented.
@@ -447,7 +466,7 @@ durable Drive event is due.
 ## Next hardening milestones
 
 1. PostgreSQL migrations and `SELECT ... FOR UPDATE SKIP LOCKED`
-2. OIDC login, project RBAC, and endpoint-level per-agent scopes
+2. OIDC login, project RBAC, and broader endpoint-level per-agent scopes
 3. stable Sheet source IDs and conflict-aware two-way sync
 4. dry-run connector previews and credential brokerage outside approval payloads
 5. controlled Sheet/GitLab/chat executors with provider idempotency and explicit enable switches

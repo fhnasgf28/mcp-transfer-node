@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 from typing import Any
-from urllib.parse import quote, urlparse
+from urllib.parse import urlparse
 
 import httpx
 from mcp.server.fastmcp import FastMCP
@@ -622,11 +622,14 @@ def pmt_get_internal_status_draft(
     owner: str, report_date: str, period: str, version: int = 0
 ) -> dict[str, object]:
     """Get one PMT internal-status snapshot, defaulting to the latest version."""
-    params = {"version": version} if version > 0 else None
-    path = "/internal-status/reports/{}/{}/{}".format(
-        quote(owner, safe=""), quote(report_date, safe=""), quote(period, safe="")
-    )
-    return _request("GET", path, params=params)
+    params: dict[str, object] = {
+        "owner": owner,
+        "report_date": report_date,
+        "period": period,
+    }
+    if version > 0:
+        params["version"] = version
+    return _request("GET", "/internal-status/report", params=params)
 
 
 @mcp.tool()
@@ -650,10 +653,11 @@ def pmt_revise_internal_status_draft(
     """Create a fenced new draft version with bounded task-linked section overrides."""
     return _request(
         "POST",
-        "/internal-status/reports/{}/{}/{}/revise".format(
-            quote(owner, safe=""), quote(report_date, safe=""), quote(period, safe="")
-        ),
+        "/internal-status/report/revise",
         json_body={
+            "owner": owner,
+            "report_date": report_date,
+            "period": period,
             "expected_version": expected_version,
             "overrides": {"include": include or [], "exclude": exclude or []},
         },
@@ -667,10 +671,13 @@ def pmt_approve_internal_status_draft(
     """Approve the latest draft with explicit approval scope and version fencing."""
     return _request(
         "POST",
-        "/internal-status/reports/{}/{}/{}/approve".format(
-            quote(owner, safe=""), quote(report_date, safe=""), quote(period, safe="")
-        ),
-        json_body={"expected_version": expected_version},
+        "/internal-status/report/approve",
+        json_body={
+            "owner": owner,
+            "report_date": report_date,
+            "period": period,
+            "expected_version": expected_version,
+        },
     )
 
 
@@ -681,10 +688,13 @@ def pmt_mark_internal_status_sent(
     """Idempotently mark an approved snapshot sent; this never calls a chat provider."""
     return _request(
         "POST",
-        "/internal-status/reports/{}/{}/{}/mark-sent".format(
-            quote(owner, safe=""), quote(report_date, safe=""), quote(period, safe="")
-        ),
-        json_body={"expected_version": expected_version},
+        "/internal-status/report/mark-sent",
+        json_body={
+            "owner": owner,
+            "report_date": report_date,
+            "period": period,
+            "expected_version": expected_version,
+        },
     )
 
 

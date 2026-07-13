@@ -232,6 +232,18 @@ class InternalStatusTransition(BaseModel):
     expected_version: int = Field(ge=1)
 
 
+class InternalStatusReviseByRef(InternalStatusRevise):
+    owner: str = Field(min_length=1, max_length=120)
+    report_date: str = Field(min_length=1, max_length=10)
+    period: str = Field(min_length=1, max_length=20)
+
+
+class InternalStatusTransitionByRef(InternalStatusTransition):
+    owner: str = Field(min_length=1, max_length=120)
+    report_date: str = Field(min_length=1, max_length=10)
+    period: str = Field(min_length=1, max_length=20)
+
+
 class ApprovalRequestCreate(BaseModel):
     action_type: str
     title: str = Field(min_length=1, max_length=300)
@@ -885,6 +897,17 @@ def create_pmt_api_router(
             translate_error(exc)
         return success_response({"report": report})
 
+    @router.get("/internal-status/report")
+    def get_internal_status_report_by_query(
+        owner: str = Query(min_length=1, max_length=120),
+        report_date: str = Query(min_length=1, max_length=10),
+        period: str = Query(min_length=1, max_length=20),
+        version: int | None = Query(default=None, ge=1, le=1_000_000),
+        peer: AllowedPeer = Depends(require_agent),
+    ):
+        """Query-compatible lookup for owner values that contain URL path separators."""
+        return get_internal_status_report(owner, report_date, period, version, peer)
+
     @router.post("/internal-status/reports/{owner}/{report_date}/{period}/revise")
     def revise_internal_status_report(
         owner: str,
@@ -906,6 +929,16 @@ def create_pmt_api_router(
         except (KeyError, PermissionError, ValueError) as exc:
             translate_error(exc)
         return success_response({"report": report})
+
+    @router.post("/internal-status/report/revise")
+    def revise_internal_status_report_by_ref(
+        payload: InternalStatusReviseByRef,
+        peer: AllowedPeer = Depends(require_agent),
+    ):
+        """Body-compatible revision endpoint for owners containing slashes."""
+        return revise_internal_status_report(
+            payload.owner, payload.report_date, payload.period, payload, peer
+        )
 
     @router.post("/internal-status/reports/{owner}/{report_date}/{period}/approve")
     def approve_internal_status_report(
@@ -929,6 +962,16 @@ def create_pmt_api_router(
             translate_error(exc)
         return success_response({"report": report})
 
+    @router.post("/internal-status/report/approve")
+    def approve_internal_status_report_by_ref(
+        payload: InternalStatusTransitionByRef,
+        peer: AllowedPeer = Depends(require_agent),
+    ):
+        """Body-compatible approval endpoint for owners containing slashes."""
+        return approve_internal_status_report(
+            payload.owner, payload.report_date, payload.period, payload, peer
+        )
+
     @router.post("/internal-status/reports/{owner}/{report_date}/{period}/mark-sent")
     def mark_internal_status_report_sent(
         owner: str,
@@ -950,6 +993,16 @@ def create_pmt_api_router(
         except (KeyError, PermissionError, ValueError) as exc:
             translate_error(exc)
         return success_response({"report": report})
+
+    @router.post("/internal-status/report/mark-sent")
+    def mark_internal_status_report_sent_by_ref(
+        payload: InternalStatusTransitionByRef,
+        peer: AllowedPeer = Depends(require_agent),
+    ):
+        """Body-compatible delivery acknowledgement for owners containing slashes."""
+        return mark_internal_status_report_sent(
+            payload.owner, payload.report_date, payload.period, payload, peer
+        )
 
     @router.get("/schedules")
     def list_schedules(_: AllowedPeer = Depends(require_agent)):

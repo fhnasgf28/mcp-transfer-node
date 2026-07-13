@@ -3,8 +3,10 @@ from __future__ import annotations
 import json
 import secrets
 from pathlib import Path
+from datetime import datetime
 from typing import Any
 from urllib.parse import urlencode
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Form, HTTPException, Query, Request, status
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
@@ -220,11 +222,17 @@ def create_pmt_web_router(
     ) -> HTMLResponse:
         _require_login(request)
         selected = None
+        selected_is_latest = False
         error = request.session.pop("pmt_report_error", None)
+        flash = request.session.pop("pmt_report_flash", None)
         if owner and report_date and period:
             try:
                 selected = store.get_internal_status_report(
                     owner, report_date, period, report_version
+                )
+                latest = store.get_internal_status_report(owner, report_date, period)
+                selected_is_latest = bool(
+                    selected is not None and latest is not None and selected["id"] == latest["id"]
                 )
             except ValueError as exc:
                 error = str(exc)
@@ -234,10 +242,36 @@ def create_pmt_web_router(
             {
                 "settings": settings,
                 "reports": store.list_internal_status_reports(owner=owner or None, limit=100),
+                "report_tasks": [
+                    task
+                    for task in store.list_tasks(limit=500)
+                    if not owner or task["assignee"].casefold() == owner.casefold()
+                ],
                 "selected": selected,
+                "selected_is_latest": selected_is_latest,
+                "today": datetime.now(ZoneInfo("Asia/Jakarta")).date().isoformat(),
                 "csrf_token": request.session["csrf_token"],
                 "error": error,
+                "flash": flash,
             },
+        )
+
+    def report_redirect(
+        owner: str,
+        report_date: str,
+        period: str,
+        report_version: int,
+    ) -> RedirectResponse:
+        query = urlencode(
+            {
+                "owner": owner,
+                "report_date": report_date,
+                "period": period,
+                "report_version": report_version,
+            }
+        )
+        return RedirectResponse(
+            f"/pmt/internal-status?{query}", status_code=status.HTTP_303_SEE_OTHER
         )
 
     @router.post("/internal-status/generate")
@@ -266,16 +300,14 @@ def create_pmt_web_router(
         except (KeyError, PermissionError, ValueError) as exc:
             request.session["pmt_report_error"] = str(exc)
             return RedirectResponse("/pmt/internal-status", status_code=status.HTTP_303_SEE_OTHER)
-        query = urlencode(
-            {
-                "owner": report["owner"],
-                "report_date": report["report_date"],
-                "period": report["period"],
-                "report_version": report["report_version"],
-            }
+        request.session["pmt_report_flash"] = (
+            f"Snapshot v{report['report_version']} siap digunakan."
         )
-        return RedirectResponse(
-            f"/pmt/internal-status?{query}", status_code=status.HTTP_303_SEE_OTHER
+        return report_redirect(
+            report["owner"],
+            report["report_date"],
+            report["period"],
+            report["report_version"],
         )
 
     @router.post("/internal-status/revise")
@@ -303,7 +335,7 @@ def create_pmt_web_router(
                 overrides[action] = [dict(item) for item in prior["overrides"][action]]
         except (KeyError, ValueError) as exc:
             request.session["pmt_report_error"] = str(exc)
-            return RedirectResponse("/pmt/internal-status", status_code=status.HTTP_303_SEE_OTHER)
+            return report_redirect(owner, report_date, period, expected_version)
         if include_section and include_task_ref:
             addition = {
                 "section": include_section,
@@ -324,7 +356,7 @@ def create_pmt_web_router(
             ]
             overrides["exclude"].append({"section": exclude_section, "task_ref": exclude_task_ref})
         try:
-            store.revise_internal_status_report(
+            report = store.revise_internal_status_report(
                 owner=owner,
                 report_date=report_date,
                 period=period,
@@ -334,17 +366,11 @@ def create_pmt_web_router(
             )
         except (KeyError, PermissionError, ValueError) as exc:
             request.session["pmt_report_error"] = str(exc)
-        query = urlencode(
-            {
-                "owner": owner,
-                "report_date": report_date,
-                "period": period,
-                "report_version": expected_version + 1,
-            }
+            return report_redirect(owner, report_date, period, expected_version)
+        request.session["pmt_report_flash"] = (
+            f"Revisi tersimpan sebagai snapshot v{report['report_version']}."
         )
-        return RedirectResponse(
-            f"/pmt/internal-status?{query}", status_code=status.HTTP_303_SEE_OTHER
-        )
+        return report_redirect(owner, report_date, period, report["report_version"])
 
     def transition_internal_status_report_web(
         request: Request,
@@ -359,7 +385,14 @@ def create_pmt_web_router(
         _require_login(request)
         _require_csrf(request, csrf_token)
         try:
-            store.transition_internal_status_report(
+            latest = store.get_internal_status_report(owner, report_date, period)
+            if latest is None:
+                raise KeyError(f"{owner}:{report_date}:{period}")
+            if latest["report_version"] != expected_version:
+                raise PermissionError(
+                    "report changed since it was loaded; historical snapshots are read-only"
+                )
+            report = store.transition_internal_status_report(
                 owner=owner,
                 report_date=report_date,
                 period=period,
@@ -369,17 +402,13 @@ def create_pmt_web_router(
             )
         except (KeyError, PermissionError, ValueError) as exc:
             request.session["pmt_report_error"] = str(exc)
-        query = urlencode(
-            {
-                "owner": owner,
-                "report_date": report_date,
-                "period": period,
-                "report_version": expected_version,
-            }
+            return report_redirect(owner, report_date, period, expected_version)
+        request.session["pmt_report_flash"] = (
+            "Snapshot disetujui."
+            if report["state"] == "approved"
+            else "Snapshot ditandai sudah dikirim. Tidak ada pesan chat yang dikirim otomatis."
         )
-        return RedirectResponse(
-            f"/pmt/internal-status?{query}", status_code=status.HTTP_303_SEE_OTHER
-        )
+        return report_redirect(owner, report_date, period, report["report_version"])
 
     @router.post("/internal-status/approve")
     def approve_internal_status_report_web(

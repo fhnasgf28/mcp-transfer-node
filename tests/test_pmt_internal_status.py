@@ -100,6 +100,41 @@ def test_report_date_timezone_todo_done_sections_and_mr_evening_only(settings):
     assert evening["sections"]["merge_requests"][0]["source_evidence_id"]
 
 
+def test_report_uses_durable_progress_notes_for_done_and_active_items(settings):
+    store = PmtStore(settings.pmt_db_path)
+    store.initialize()
+    done = _create(store, "Done title")
+    done = store.admin_transition_task(
+        done["task_key"], "done", "admin", note="Finished the access matrix"
+    )
+    active = _create(store, "Active title", status="inbox")
+    with store._connect() as db:
+        db.execute(
+            "UPDATE tasks SET status='in_progress',progress_note=? WHERE id=?",
+            ("Implementing recursive subordinate checks", active["id"]),
+        )
+        db.execute(
+            """INSERT INTO task_events(task_id,event_type,actor,payload,created_at)
+               VALUES(?,?,?,?,?)""",
+            (
+                active["id"],
+                "task.in_progress",
+                "agent",
+                "{}",
+                "2026-07-13T03:00:00+00:00",
+            ),
+        )
+        db.commit()
+    _set_event_time(store, done["id"], "task.done", "2026-07-13T03:00:00+00:00")
+
+    report = store.generate_internal_status_report(
+        owner="Farhan", report_date="2026-07-13", period="evening", actor="test"
+    )
+
+    assert "PMT-0001 - Finished the access matrix" in report["rendered_text"]
+    assert "PMT-0002 - Implementing recursive subordinate checks" in report["rendered_text"]
+
+
 def test_report_versioning_overrides_immutability_and_idempotent_sent(settings):
     store = PmtStore(settings.pmt_db_path)
     store.initialize()
@@ -240,6 +275,60 @@ def test_regeneration_requires_expected_version_and_preserves_approved_history(s
     )
 
 
+def test_sent_acknowledges_exact_approved_version_while_other_writes_fence_latest(settings):
+    store = PmtStore(settings.pmt_db_path)
+    store.initialize()
+    first = store.generate_internal_status_report(
+        owner="Farhan", report_date="2026-07-13", period="morning", actor="generator"
+    )
+    store.transition_internal_status_report(
+        owner="Farhan",
+        report_date="2026-07-13",
+        period="morning",
+        expected_version=first["report_version"],
+        target_state="approved",
+        actor="approver",
+    )
+    second = store.generate_internal_status_report(
+        owner="Farhan",
+        report_date="2026-07-13",
+        period="morning",
+        actor="generator",
+        regenerate=True,
+        expected_version=first["report_version"],
+    )
+
+    sent = store.transition_internal_status_report(
+        owner="Farhan",
+        report_date="2026-07-13",
+        period="morning",
+        expected_version=first["report_version"],
+        target_state="sent",
+        actor="delivery-worker",
+    )
+    assert sent["report_version"] == 1
+    assert sent["state"] == "sent"
+    assert store.get_internal_status_report("Farhan", "2026-07-13", "morning")["id"] == second["id"]
+    with pytest.raises(PermissionError, match="changed since"):
+        store.transition_internal_status_report(
+            owner="Farhan",
+            report_date="2026-07-13",
+            period="morning",
+            expected_version=first["report_version"],
+            target_state="approved",
+            actor="approver",
+        )
+    with pytest.raises(PermissionError, match="changed since"):
+        store.revise_internal_status_report(
+            owner="Farhan",
+            report_date="2026-07-13",
+            period="morning",
+            expected_version=first["report_version"],
+            overrides={"include": [], "exclude": []},
+            actor="editor",
+        )
+
+
 def test_concurrent_report_regeneration_allows_only_one_expected_version_writer(settings):
     store = PmtStore(settings.pmt_db_path)
     store.initialize()
@@ -362,6 +451,8 @@ def test_web_revision_preserves_prior_overrides_deterministically(settings):
                 "report_version": second["report_version"],
             },
         )
+        assert 'id="copy-report"' in page.text
+        assert f'<option value="{task["task_key"]}">' in page.text
         import re
 
         csrf = re.search(r'name="csrf_token" value="([^"]+)"', page.text).group(1)
@@ -376,12 +467,54 @@ def test_web_revision_preserves_prior_overrides_deterministically(settings):
             },
         )
         assert response.status_code == 200
+        assert "Revisi tersimpan sebagai snapshot v3." in response.text
+        assert "snapshot v3" in response.text
     third = store.get_internal_status_report("Farhan", "2026-07-13", "morning")
     assert third["overrides"] == second["overrides"]
     assert third["sections"]["plan"][0]["note"] == "first"
 
 
-def test_mcp_report_paths_encode_every_path_segment(monkeypatch):
+def test_web_failed_revision_keeps_current_snapshot_selected(settings):
+    store = PmtStore(settings.pmt_db_path)
+    store.initialize()
+    first = store.generate_internal_status_report(
+        owner="Farhan", report_date="2026-07-13", period="morning", actor="generator"
+    )
+    with TestClient(create_app(settings), base_url="https://testserver") as client:
+        client.post("/login", data={"username": "admin", "password": "admin-password"})
+        page = client.get(
+            "/pmt/internal-status",
+            params={
+                "owner": "Farhan",
+                "report_date": "2026-07-13",
+                "period": "morning",
+                "report_version": first["report_version"],
+            },
+        )
+        import re
+
+        csrf = re.search(r'name="csrf_token" value="([^"]+)"', page.text).group(1)
+        response = client.post(
+            "/pmt/internal-status/revise",
+            data={
+                "csrf_token": csrf,
+                "owner": "Farhan",
+                "report_date": "2026-07-13",
+                "period": "morning",
+                "expected_version": first["report_version"],
+                "include_section": "merge_requests",
+                "include_task_ref": "missing-task",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 303
+        assert "report_version=1" in response.headers["location"]
+        redirected = client.get(response.headers["location"])
+        assert "snapshot v1" in redirected.text
+        assert "not available for morning reports" in redirected.text
+
+
+def test_mcp_report_tools_keep_owner_and_date_out_of_url_paths(monkeypatch):
     calls = []
 
     def fake(method, path, **kwargs):
@@ -393,8 +526,22 @@ def test_mcp_report_paths_encode_every_path_segment(monkeypatch):
     pmt_mcp_server.pmt_revise_internal_status_draft("A/B C", "2026/07/13", "morning", 2)
     pmt_mcp_server.pmt_approve_internal_status_draft("A/B C", "2026/07/13", "morning", 2)
     pmt_mcp_server.pmt_mark_internal_status_sent("A/B C", "2026/07/13", "morning", 2)
-    for _, path, _ in calls:
-        assert "/A%2FB%20C/2026%2F07%2F13/morning" in path
+    assert calls[0] == (
+        "GET",
+        "/internal-status/report",
+        {
+            "params": {
+                "owner": "A/B C",
+                "report_date": "2026/07/13",
+                "period": "morning",
+                "version": 2,
+            }
+        },
+    )
+    for _, path, kwargs in calls[1:]:
+        assert path.startswith("/internal-status/report/")
+        assert kwargs["json_body"]["owner"] == "A/B C"
+        assert kwargs["json_body"]["report_date"] == "2026/07/13"
 
 
 def test_web_selects_exact_historical_report_version(settings):
@@ -428,8 +575,13 @@ def test_web_selects_exact_historical_report_version(settings):
             },
         )
     assert "snapshot v1" in historical.text
-    assert "Only in latest" not in historical.text
+    report_text = historical.text.split('id="report-text"', 1)[1].split("</pre>", 1)[0]
+    assert "Only in latest" not in report_text
     assert f"report_version={second['report_version']}" in historical.text
+    assert "Historical snapshot — read-only." in historical.text
+    assert 'action="/pmt/internal-status/revise"' not in historical.text
+    assert 'action="/pmt/internal-status/approve"' not in historical.text
+    assert 'action="/pmt/internal-status/mark-sent"' not in historical.text
 
 
 def test_report_expected_version_conflict_and_override_bounds(settings):
@@ -459,6 +611,43 @@ def test_report_expected_version_conflict_and_override_bounds(settings):
                 "exclude": [],
             },
             actor="test",
+        )
+
+
+@pytest.mark.parametrize(
+    ("period", "section"),
+    [("morning", "merge_requests"), ("evening", "plan")],
+)
+def test_report_exclusions_reject_period_unavailable_sections(settings, period, section):
+    store = PmtStore(settings.pmt_db_path)
+    store.initialize()
+    task = _create(store, "Task")
+    with pytest.raises(ValueError, match=f"not available for {period} reports"):
+        store.generate_internal_status_report(
+            owner="Farhan",
+            report_date="2026-07-13",
+            period=period,
+            actor="test",
+            overrides={
+                "include": [],
+                "exclude": [{"section": section, "task_ref": task["task_key"]}],
+            },
+        )
+
+
+def test_report_exclusions_reject_unknown_task_refs(settings):
+    store = PmtStore(settings.pmt_db_path)
+    store.initialize()
+    with pytest.raises(KeyError, match="PMT-9999"):
+        store.generate_internal_status_report(
+            owner="Farhan",
+            report_date="2026-07-13",
+            period="morning",
+            actor="test",
+            overrides={
+                "include": [],
+                "exclude": [{"section": "plan", "task_ref": "PMT-9999"}],
+            },
         )
 
 
@@ -572,6 +761,47 @@ def test_report_api_scope_separation_and_lifecycle(settings):
             json={"expected_version": report["report_version"]},
         )
         assert sent.json()["data"]["report"]["state"] == "sent"
+
+
+def test_report_api_query_and_body_routes_support_owner_with_slash(settings):
+    headers = {"Authorization": "Bearer report-token", "X-PMT-Agent": "report-agent"}
+    scopes = [
+        "pmt.report.read",
+        "pmt.report.generate",
+        "pmt.report.revise",
+        "pmt.report.approve",
+        "pmt.report.send",
+    ]
+    with _report_client(settings, scopes) as client:
+        generated = client.post(
+            "/api/v1/pmt/internal-status/reports/generate",
+            headers=headers,
+            json={"owner": "Platform/API", "period": "morning", "report_date": "2026-07-13"},
+        ).json()["data"]["report"]
+        fetched = client.get(
+            "/api/v1/pmt/internal-status/report",
+            headers=headers,
+            params={
+                "owner": "Platform/API",
+                "report_date": "2026-07-13",
+                "period": "morning",
+                "version": generated["report_version"],
+            },
+        )
+        assert fetched.status_code == 200
+        revised = client.post(
+            "/api/v1/pmt/internal-status/report/revise",
+            headers=headers,
+            json={
+                "owner": "Platform/API",
+                "report_date": "2026-07-13",
+                "period": "morning",
+                "expected_version": generated["report_version"],
+                "overrides": {"include": [], "exclude": []},
+            },
+        )
+        assert revised.status_code == 200
+        assert revised.json()["data"]["report"]["report_version"] == 2
 
 
 def test_mcp_report_tools_use_rest_adapter(monkeypatch):

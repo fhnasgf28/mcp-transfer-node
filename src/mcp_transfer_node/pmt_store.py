@@ -1862,7 +1862,8 @@ class PmtStore:
             "merge_requests": [],
         }
         done_rows = db.execute(
-            """SELECT task_events.id AS event_id,tasks.* FROM task_events
+            """SELECT task_events.id AS event_id,task_events.payload AS event_payload,tasks.*
+                FROM task_events
                 JOIN tasks ON tasks.id=task_events.task_id
                 WHERE lower(tasks.assignee)=lower(?) AND task_events.event_type='task.done'
                   AND task_events.created_at>=? AND task_events.created_at<?
@@ -1874,8 +1875,14 @@ class PmtStore:
             if task["id"] in seen_done:
                 continue
             seen_done.add(task["id"])
+            payload = json.loads(task["event_payload"])
+            note = clean_text(payload.get("note")) if isinstance(payload, dict) else ""
             sections["done"].append(
-                self._report_task_item(task, source_event_id=int(task["event_id"]))
+                self._report_task_item(
+                    task,
+                    source_event_id=int(task["event_id"]),
+                    note=note or task["progress_note"],
+                )
             )
 
         if period == "morning":
@@ -1923,7 +1930,11 @@ class PmtStore:
         for task in tasks:
             if task["status"] in {"claimed", "in_progress", "ready_for_review"}:
                 sections["in_progress"].append(
-                    self._report_task_item(task, source_event_id=state_event_ids.get(task["id"]))
+                    self._report_task_item(
+                        task,
+                        source_event_id=state_event_ids.get(task["id"]),
+                        note=task["progress_note"],
+                    )
                 )
             elif task["status"] == "blocked":
                 sections["blocker"].append(
@@ -1978,15 +1989,18 @@ class PmtStore:
                         self._report_task_item(task, source_event_id=int(task["event_id"]), url=url)
                     )
 
-        for exclusion in overrides["exclude"]:
-            section = exclusion["section"]
-            task = by_ref.get(exclusion["task_ref"])
-            if task:
-                sections[section] = [
-                    item for item in sections[section] if item["task_id"] != task["id"]
-                ]
         allowed_sections = {"done", "in_progress", "blocker"}
         allowed_sections.add("plan" if period == "morning" else "merge_requests")
+        for exclusion in overrides["exclude"]:
+            section = exclusion["section"]
+            if section not in allowed_sections:
+                raise ValueError(f"section {section} is not available for {period} reports")
+            task = by_ref.get(exclusion["task_ref"])
+            if task is None:
+                raise KeyError(exclusion["task_ref"])
+            sections[section] = [
+                item for item in sections[section] if item["task_id"] != task["id"]
+            ]
         for inclusion in overrides["include"]:
             section = inclusion["section"]
             if section not in allowed_sections:
@@ -2185,13 +2199,32 @@ class PmtStore:
         expected_version = self._report_version(expected_version)
         parsed_date = parse_report_date(report_date, "Asia/Jakarta")
         with self._transaction() as db:
-            row = db.execute(
-                """SELECT * FROM internal_status_reports
-                    WHERE lower(owner)=lower(?) AND report_date=? AND period=?
-                    ORDER BY report_version DESC LIMIT 1""",
-                (owner, parsed_date.isoformat(), validate_period(period)),
-            ).fetchone()
+            normalized_period = validate_period(period)
+            if target_state == "approved":
+                row = db.execute(
+                    """SELECT * FROM internal_status_reports
+                        WHERE lower(owner)=lower(?) AND report_date=? AND period=?
+                        ORDER BY report_version DESC LIMIT 1""",
+                    (owner, parsed_date.isoformat(), normalized_period),
+                ).fetchone()
+            else:
+                # Delivery acknowledgement is tied to the exact approved payload that
+                # was sent. A later draft must not make that acknowledgement stale.
+                row = db.execute(
+                    """SELECT * FROM internal_status_reports
+                        WHERE lower(owner)=lower(?) AND report_date=? AND period=?
+                          AND report_version=?""",
+                    (owner, parsed_date.isoformat(), normalized_period, expected_version),
+                ).fetchone()
             if row is None:
+                latest = db.execute(
+                    """SELECT report_version FROM internal_status_reports
+                        WHERE lower(owner)=lower(?) AND report_date=? AND period=?
+                        ORDER BY report_version DESC LIMIT 1""",
+                    (owner, parsed_date.isoformat(), normalized_period),
+                ).fetchone()
+                if latest is not None:
+                    raise PermissionError("report changed since it was loaded; refresh and retry")
                 raise KeyError(f"{owner}:{report_date}:{period}")
             if int(row["report_version"]) != expected_version:
                 raise PermissionError("report changed since it was loaded; refresh and retry")

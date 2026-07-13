@@ -50,6 +50,8 @@ External mutations are represented by immutable approval requests for Sheet writ
 
 Google Docs context is disabled unless the owner configures an absolute, owner-only service-account file. It uses only `documents.readonly`, the fixed `docs.googleapis.com` endpoint, and explicit `pmt.context.read` / `pmt.context.refresh` peer scopes. Document content is always marked untrusted evidence and cannot authorize tools or commands. See the full guide for API enablement and threat-model details.
 
+Internal-status agents need explicit report scopes. A normal report-author profile uses `pmt.report.read`, `pmt.report.generate`, and `pmt.report.revise`. Keep `pmt.report.approve` and `pmt.report.send` on separate privileged reviewer/delivery profiles; neither scope sends a chat message, and `send` only records an external delivery acknowledgement.
+
 Create a verified online SQLite backup:
 
 ```bash
