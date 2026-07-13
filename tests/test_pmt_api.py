@@ -383,20 +383,21 @@ def test_pmt_dashboard_requires_login_and_can_create_task(client):
     assert "bootstrap@5.3.3" in dashboard.text
     assert 'id="newTaskModal"' in dashboard.text
     assert 'class="modal-content pmt-modal-form' in dashboard.text
-    assert "/static/pmt.css?v=20260713-header1" in dashboard.text
-    assert "/static/pmt-mobile.css?v=20260713-header1" in dashboard.text
+    assert "/static/pmt.css?v=20260713-nav2" in dashboard.text
+    assert "/static/pmt-mobile.css?v=20260713-nav2" in dashboard.text
     assert 'class="pmt-primary-nav"' in dashboard.text
     assert 'aria-label="Navigasi utama PMT"' in dashboard.text
     assert "<span>Home</span>" in dashboard.text
-    assert dashboard.text.count('class="pmt-nav-icon"') == 4
+    assert dashboard.text.count('class="pmt-nav-icon"') == 5
     assert 'href="/pmt" aria-current="page"' in dashboard.text
+    assert "scrollIntoView" in dashboard.text
     assert "pmt-navbar-actions" in dashboard.text
     assert "pmt-agent-status" in dashboard.text
     assert "pmt-header-more" in dashboard.text
     assert "pmt-page-header-note" in dashboard.text
     assert "syncCreateTaskMenuDirection" in dashboard.text
     assert "pmt-create-menu-open" in dashboard.text
-    mobile_css = client.get("/static/pmt-mobile.css?v=20260713-header1")
+    mobile_css = client.get("/static/pmt-mobile.css?v=20260713-nav2")
     assert ".pmt-create-task-button.dropup .dropdown-menu" in mobile_css.text
     assert "overflow: visible" in mobile_css.text
     assert "margin-bottom: 0.5rem" in mobile_css.text
@@ -410,10 +411,14 @@ def test_pmt_dashboard_requires_login_and_can_create_task(client):
     assert "data-feedback-message" in dashboard.text
     assert "/pmt/tasks/PMT-0001" in dashboard.text
     assert "/status/kanban" in dashboard.text
-    css = client.get("/static/pmt.css?v=20260713-header1")
+    css = client.get("/static/pmt.css?v=20260713-nav2")
     assert ".pmt-primary-nav .pmt-nav-link" in css.text
     assert "gap: 0.45rem" in css.text
-    assert "grid-template-columns: repeat(4, minmax(0, 1fr))" in mobile_css.text
+    assert "display: flex !important" in mobile_css.text
+    assert "flex-wrap: nowrap !important" in mobile_css.text
+    assert "overflow-x: auto !important" in mobile_css.text
+    assert "flex: 1 0 3.75rem" in mobile_css.text
+    assert "scroll-snap-type: x proximity" in mobile_css.text
     assert "flex-direction: column" in mobile_css.text
     assert "/* Refined application header */" in css.text
     assert ".pmt-agent-status" in css.text

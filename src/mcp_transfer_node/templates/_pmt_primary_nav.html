@@ -44,3 +44,14 @@
     <span>Approvals</span>
   </a>
 </div>
+<script>
+  (() => {
+    const script = document.currentScript;
+    const nav = script && script.previousElementSibling;
+    const activeLink = nav && nav.querySelector('[aria-current="page"]');
+    if (!activeLink || !window.matchMedia("(max-width: 991.98px)").matches) return;
+    window.requestAnimationFrame(() => {
+      activeLink.scrollIntoView({ behavior: "auto", block: "nearest", inline: "center" });
+    });
+  })();
+</script>

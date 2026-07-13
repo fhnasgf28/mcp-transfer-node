@@ -357,15 +357,22 @@ html {
     bottom: max(0.625rem, env(safe-area-inset-bottom));
     left: 0.75rem;
     z-index: 1040;
-    display: grid !important;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    display: flex !important;
     gap: 0.375rem !important;
     width: auto !important;
     max-width: none !important;
     padding: 0.45rem;
     margin: 0 !important;
     align-items: stretch !important;
-    overflow: visible !important;
+    overflow-x: auto !important;
+    overflow-y: hidden !important;
+    flex-wrap: nowrap !important;
+    overscroll-behavior-inline: contain;
+    scroll-padding-inline: 0.45rem;
+    scroll-snap-type: x proximity;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+    touch-action: pan-x;
     background: rgba(255, 255, 255, 0.94);
     border: 1px solid rgba(205, 214, 229, 0.9);
     border-radius: 1rem;
@@ -373,10 +380,15 @@ html {
     backdrop-filter: blur(18px);
   }
 
+  .pmt-navbar .pmt-primary-nav::-webkit-scrollbar {
+    display: none;
+  }
+
   .pmt-navbar .pmt-primary-nav .btn {
     display: inline-flex !important;
     gap: 0.3rem;
-    min-width: 0;
+    min-width: 3.75rem;
+    flex: 1 0 3.75rem;
     min-height: 3.65rem;
     padding: 0.5rem 0.2rem;
     flex-direction: column;
@@ -391,6 +403,18 @@ html {
     border: 0 !important;
     border-radius: 0.75rem !important;
     box-shadow: none;
+    scroll-snap-align: center;
+  }
+
+  .pmt-navbar .pmt-primary-nav .btn > span {
+    display: -webkit-box;
+    max-width: 100%;
+    overflow: hidden;
+    line-height: 1.1;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
   }
 
   .pmt-navbar .pmt-primary-nav .pmt-nav-icon {
